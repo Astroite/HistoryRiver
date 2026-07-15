@@ -7,6 +7,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   CONTENT_END_YEAR,
   DEFAULT_FOCUS_YEAR,
+  OBSERVATION_SPAN,
   RIVER_START_YEAR,
   createLifePath,
   createObservationWindow,
@@ -392,35 +393,96 @@ export function HistoryRiver() {
     });
     riverGroup.add(new THREE.Points(seaGeometry, seaMaterial));
 
-    const lifeSegments: number[] = [];
-    for (const person of fixture.persons) {
-      const path = createLifePath(person, fixture, quality === "default" ? 2 : 4);
-      for (let index = 1; index < path.length; index += 1) {
-        const previous = path[index - 1];
-        const current = path[index];
-        lifeSegments.push(
-          previous.x,
-          previous.y,
-          previous.z,
-          current.x,
-          current.y,
-          current.z,
-        );
-      }
-    }
-    const lifeGeometry = new THREE.BufferGeometry();
-    lifeGeometry.setAttribute(
-      "position",
-      new THREE.Float32BufferAttribute(lifeSegments, 3),
-    );
-    const lifeMaterial = new THREE.LineBasicMaterial({
-      color: 0x5b8790,
+    const lifeContextMaterial = new THREE.LineBasicMaterial({
+      color: 0x456d73,
       transparent: true,
-      opacity: 0.34,
+      opacity: 0,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
     });
-    riverGroup.add(new THREE.LineSegments(lifeGeometry, lifeMaterial));
+    const lifeEventMaterial = new THREE.LineBasicMaterial({
+      color: 0x79a5a3,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    });
+    const lifeContextLine = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      lifeContextMaterial,
+    );
+    const lifeEventLine = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      lifeEventMaterial,
+    );
+    lifeContextLine.renderOrder = 1;
+    lifeEventLine.renderOrder = 2;
+    riverGroup.add(lifeContextLine, lifeEventLine);
+
+    let lastLifeWindowFocus = Number.NaN;
+    const updateLifeWindowGeometry = (focus: number) => {
+      const nearestEvent = fixture.events.reduce((nearest, event) =>
+        Math.abs(event.year - focus) < Math.abs(nearest.year - focus)
+          ? event
+          : nearest,
+      );
+      const eventParticipants = new Set(nearestEvent.participantIds);
+      const contextSegments: number[] = [];
+      const eventSegments: number[] = [];
+      const halfSpan = OBSERVATION_SPAN / 2 + 3;
+      const stepYears = quality === "default" ? 1 : 2;
+
+      for (const person of fixture.persons) {
+        const startYear = Math.max(person.birthYear, Math.floor(focus - halfSpan));
+        const endYear = Math.min(person.deathYear, Math.ceil(focus + halfSpan));
+        if (startYear >= endYear) continue;
+
+        const target = eventParticipants.has(person.id)
+          ? eventSegments
+          : contextSegments;
+        let previous = personPositionAt(person, startYear, fixture);
+        for (
+          let year = startYear + stepYears;
+          year <= endYear;
+          year += stepYears
+        ) {
+          const current = personPositionAt(person, year, fixture);
+          target.push(
+            previous.x,
+            previous.y,
+            previous.z,
+            current.x,
+            current.y,
+            current.z,
+          );
+          previous = current;
+        }
+        if (previous.y !== historicalYearToY(endYear)) {
+          const current = personPositionAt(person, endYear, fixture);
+          target.push(
+            previous.x,
+            previous.y,
+            previous.z,
+            current.x,
+            current.y,
+            current.z,
+          );
+        }
+      }
+
+      lifeContextLine.geometry.dispose();
+      lifeContextLine.geometry = new THREE.BufferGeometry();
+      lifeContextLine.geometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(contextSegments, 3),
+      );
+      lifeEventLine.geometry.dispose();
+      lifeEventLine.geometry = new THREE.BufferGeometry();
+      lifeEventLine.geometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(eventSegments, 3),
+      );
+    };
 
     const selectedGeometry = new THREE.BufferGeometry();
     const selectedMaterial = new THREE.LineBasicMaterial({
@@ -434,8 +496,12 @@ export function HistoryRiver() {
     riverGroup.add(selectedLifeLine);
     let lastSelectedPath = "";
 
-    const personGeometry = new THREE.SphereGeometry(0.34, 12, 12);
-    const personMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const personGeometry = new THREE.SphereGeometry(0.25, 14, 14);
+    const personMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.92,
+    });
     const personMesh = new THREE.InstancedMesh(
       personGeometry,
       personMaterial,
@@ -456,16 +522,30 @@ export function HistoryRiver() {
       if (!source || !target) continue;
       const start = personPositionAt(source, relation.year, fixture);
       const end = personPositionAt(target, relation.year, fixture);
-      const curve = new THREE.QuadraticBezierCurve3(
-        new THREE.Vector3(start.x, start.y, start.z),
-        new THREE.Vector3(
-          (start.x + end.x) / 2,
-          Math.max(start.y, end.y) + 2.6,
-          (start.z + end.z) / 2 + 1.8,
-        ),
-        new THREE.Vector3(end.x, end.y, end.z),
+      const startPoint = new THREE.Vector3(start.x, start.y, start.z);
+      const endPoint = new THREE.Vector3(end.x, end.y, end.z);
+      const direction = endPoint.clone().sub(startPoint);
+      const planarNormal = new THREE.Vector3(-direction.z, 0, direction.x);
+      if (planarNormal.lengthSq() > 0) planarNormal.normalize();
+      const bow = THREE.MathUtils.clamp(direction.length() * 0.16, 0.65, 1.55);
+      const controlOffset = planarNormal.multiplyScalar(bow);
+      const firstControl = startPoint
+        .clone()
+        .lerp(endPoint, 0.34)
+        .add(controlOffset)
+        .add(new THREE.Vector3(0, 0.34, 0));
+      const secondControl = startPoint
+        .clone()
+        .lerp(endPoint, 0.68)
+        .add(controlOffset)
+        .add(new THREE.Vector3(0, 0.34, 0));
+      const curve = new THREE.CubicBezierCurve3(
+        startPoint,
+        firstControl,
+        secondControl,
+        endPoint,
       );
-      const geometry = new THREE.BufferGeometry().setFromPoints(curve.getPoints(36));
+      const geometry = new THREE.BufferGeometry().setFromPoints(curve.getPoints(42));
       const colors: Record<typeof relation.kind, number> = {
         direct: 0xffe5a1,
         "documented-indirect": 0x75d8cf,
@@ -474,13 +554,16 @@ export function HistoryRiver() {
       const material = new THREE.LineBasicMaterial({
         color: colors[relation.kind],
         transparent: true,
-        opacity: 0.24,
+        opacity: 0,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
       });
       const line = new THREE.Line(geometry, material);
       line.userData.relationId = relation.id;
+      line.userData.sourcePersonId = relation.sourcePersonId;
+      line.userData.targetPersonId = relation.targetPersonId;
       line.renderOrder = 5;
+      line.visible = false;
       relationLines.push(line);
       riverGroup.add(line);
     }
@@ -488,11 +571,11 @@ export function HistoryRiver() {
     const eventRings: THREE.Mesh[] = [];
     for (const event of fixture.events) {
       const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(1.4, 0.035, 6, 72),
+        new THREE.TorusGeometry(1.35, 0.02, 6, 72),
         new THREE.MeshBasicMaterial({
           color: 0xd4b36f,
           transparent: true,
-          opacity: 0.35,
+          opacity: 0.2,
           depthWrite: false,
           blending: THREE.AdditiveBlending,
         }),
@@ -512,25 +595,27 @@ export function HistoryRiver() {
       historicalYearToY(DEFAULT_FOCUS_YEAR - 10) -
         historicalYearToY(DEFAULT_FOCUS_YEAR + 10),
     );
-    const windowGeometry = new THREE.BoxGeometry(28, windowHeight, 22);
+    const windowGeometry = new THREE.BoxGeometry(24, windowHeight, 18);
+    const windowMaterial = new THREE.MeshBasicMaterial({
+      color: 0x88a8a5,
+      transparent: true,
+      opacity: 0.004,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
     const windowMesh = new THREE.Mesh(
       windowGeometry,
-      new THREE.MeshBasicMaterial({
-        color: 0xc9a866,
-        transparent: true,
-        opacity: 0.025,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      }),
+      windowMaterial,
     );
+    const windowEdgeMaterial = new THREE.LineBasicMaterial({
+      color: 0x89aaa8,
+      transparent: true,
+      opacity: 0.07,
+      blending: THREE.NormalBlending,
+    });
     const windowEdges = new THREE.LineSegments(
       new THREE.EdgesGeometry(windowGeometry),
-      new THREE.LineBasicMaterial({
-        color: 0xe1c582,
-        transparent: true,
-        opacity: 0.46,
-        blending: THREE.AdditiveBlending,
-      }),
+      windowEdgeMaterial,
     );
     riverGroup.add(windowMesh, windowEdges);
 
@@ -556,7 +641,7 @@ export function HistoryRiver() {
         new THREE.LineBasicMaterial({
           color: 0x416f72,
           transparent: true,
-          opacity: 0.28,
+          opacity: 0.18,
           depthWrite: false,
         }),
       );
@@ -648,7 +733,7 @@ export function HistoryRiver() {
       }
       if (currentView === "entering-window") {
         return {
-          position: new THREE.Vector3(24, focusY + 9, 34),
+          position: new THREE.Vector3(26, focusY + 14, 42),
           target: new THREE.Vector3(0, focusY, 0),
           up: new THREE.Vector3(0, 1, 0),
         };
@@ -738,8 +823,48 @@ export function HistoryRiver() {
       windowMesh.position.y = focusY;
       windowEdges.position.y = focusY;
       geographyGroup.position.y = focusY + 0.02;
-      const viewIsClose = viewRef.current !== "river-overview";
-      geographyGroup.visible = viewIsClose;
+      const currentView = viewRef.current;
+      const showWindow =
+        currentView === "river-overview" || currentView === "entering-window";
+      windowMesh.visible = showWindow;
+      windowEdges.visible = showWindow;
+      windowMaterial.opacity = currentView === "entering-window" ? 0.008 : 0.003;
+      windowEdgeMaterial.opacity = currentView === "entering-window" ? 0.12 : 0.055;
+
+      const showGeography =
+        currentView === "slice" ||
+        currentView === "person-focus" ||
+        currentView === "relation-focus";
+      geographyGroup.visible = showGeography;
+      const geographyOpacity =
+        currentView === "slice" ? 0.18 : currentView === "person-focus" ? 0.1 : 0.055;
+      for (const child of geographyGroup.children) {
+        ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity =
+          geographyOpacity;
+      }
+
+      if (focus !== lastLifeWindowFocus) {
+        lastLifeWindowFocus = focus;
+        updateLifeWindowGeometry(focus);
+      }
+      lifeContextMaterial.opacity =
+        currentView === "entering-window"
+          ? 0.015
+          : currentView === "slice"
+            ? 0.028
+            : currentView === "person-focus"
+              ? 0.006
+              : 0;
+      lifeEventMaterial.opacity =
+        currentView === "entering-window"
+          ? 0.07
+          : currentView === "slice"
+            ? 0.12
+            : currentView === "person-focus"
+              ? 0.018
+              : currentView === "relation-focus"
+                ? 0.01
+                : 0;
 
       for (let index = 0; index < fixture.persons.length; index += 1) {
         const person = fixture.persons[index];
@@ -749,7 +874,7 @@ export function HistoryRiver() {
         const isSelected = person.id === selectedPersonRef.current;
         const isHovered = person.id === hoveredPersonRef.current;
         const pulse = lowMotionRef.current ? 1 : 1 + Math.sin(now * 0.002 + index) * 0.06;
-        const size = alive ? (0.42 + strength * 1.05) * pulse : 0.001;
+        const size = alive ? (0.36 + strength * 0.82) * pulse : 0.001;
         tempScale.setScalar(size * (isSelected ? 1.3 : 1));
         tempMatrix.compose(
           new THREE.Vector3(point.x, point.y, point.z),
@@ -786,24 +911,54 @@ export function HistoryRiver() {
       for (const line of relationLines) {
         const material = line.material as THREE.LineBasicMaterial;
         const selected = line.userData.relationId === selectedRelationRef.current;
+        const touchesSelectedPerson =
+          line.userData.sourcePersonId === selectedPersonRef.current ||
+          line.userData.targetPersonId === selectedPersonRef.current;
         material.opacity =
-          viewRef.current === "relation-focus" ? (selected ? 0.98 : 0.16) : 0.22;
+          currentView === "relation-focus"
+            ? selected
+              ? 0.92
+              : 0
+            : currentView === "person-focus"
+              ? touchesSelectedPerson
+                ? 0.12
+                : 0
+              : currentView === "slice"
+                ? selected
+                  ? 0.1
+                  : 0.018
+                : 0;
+        line.visible = material.opacity > 0;
       }
 
       for (let index = 0; index < eventRings.length; index += 1) {
         const ring = eventRings[index];
+        ring.visible = currentView === "slice" || currentView === "person-focus";
         const distance = Math.abs(focus - (ring.userData.eventYear as number));
         const relevance = Math.max(0.08, 1 - distance / 12);
         const pulse = lowMotionRef.current ? 1 : 1 + Math.sin(now * 0.003 + index) * 0.13;
         ring.scale.setScalar((0.7 + relevance * 0.7) * pulse);
-        (ring.material as THREE.MeshBasicMaterial).opacity = 0.1 + relevance * 0.52;
+        (ring.material as THREE.MeshBasicMaterial).opacity = 0.05 + relevance * 0.27;
       }
 
-      const isOverview = viewRef.current === "river-overview";
+      const isOverview = currentView === "river-overview";
       riverMaterial.uniforms.uSize.value = isOverview
         ? quality === "default" ? 1.72 : 1.55
-        : quality === "default" ? 1.05 : 1.18;
-      riverMaterial.uniforms.uOpacity.value = isOverview ? 0.9 : 0.68;
+        : currentView === "entering-window"
+          ? quality === "default" ? 0.92 : 1.04
+          : quality === "default" ? 0.78 : 0.9;
+      riverMaterial.uniforms.uOpacity.value = isOverview
+        ? 0.9
+        : currentView === "entering-window"
+          ? 0.36
+          : currentView === "slice"
+            ? 0.24
+            : 0.14;
+      seaMaterial.opacity = isOverview
+        ? 0.38
+        : currentView === "entering-window"
+          ? 0.16
+          : 0.08;
       riverParticles.rotation.y = lowMotionRef.current ? 0 : now * 0.000025;
       sourceGlow.scale.setScalar(
         lowMotionRef.current ? 1 : 1 + Math.sin(now * 0.0007) * 0.08,
