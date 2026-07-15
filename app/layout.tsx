@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "史河：九天来流",
+  title: "落九川",
   description: "一件从今天仰望中国历史长河的互动数据艺术作品。",
 };
 

@@ -890,8 +890,8 @@ export function HistoryRiver() {
         <div className="history-brand">
           <span className="history-seal">史</span>
           <div>
-            <p className="history-kicker">HISTORY RIVER · P0</p>
-            <h1>史河：九天来流</h1>
+            <p className="history-kicker">LUO JIU CHUAN · P0</p>
+            <h1>落九川</h1>
           </div>
         </div>
         <div className="history-badges" aria-label="原型状态">

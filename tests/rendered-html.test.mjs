@@ -32,8 +32,8 @@ test("server-renders the HistoryRiver prototype shell", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>史河：九天来流｜交互原型<\/title>/i);
-  assert.match(html, /史河：九天来流/);
+  assert.match(html, /<title>落九川｜交互原型<\/title>/i);
+  assert.match(html, /落九川/);
   assert.match(html, /原型 · 模拟数据/);
   assert.match(html, /二十年窗口/);
   assert.match(html, /观河/);
@@ -50,7 +50,7 @@ test("removes all disposable starter metadata and preview code", async () => {
   assert.match(page, /export const metadata:\s*Metadata/);
   assert.match(page, /<HistoryRiver \/>/);
   assert.match(layout, /lang="zh-CN"/);
-  assert.match(packageJson, /"name": "history-river-prototype"/);
+  assert.match(packageJson, /"name": "luo-jiu-chuan-prototype"/);
   assert.doesNotMatch(page, /codex-preview|_sites-preview/);
   assert.doesNotMatch(layout, /Starter Project|next\/font\/google/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
