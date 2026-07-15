@@ -44,11 +44,12 @@
 
 | 决策 | P0 基线 | 状态 | 理由/验证点 |
 | --- | --- | --- | --- |
-| 语言 | TypeScript 严格模式 | 技术基线 | 数据语义复杂，需要在渲染前发现字段和状态错误 |
-| 构建工具 | Vite，具体版本在初始化时锁定 | 技术基线 | 适合小型现代浏览器原型；类型检查独立执行 |
-| 3D 层 | Three.js `WebGLRenderer` | 技术基线 | P0 优先稳定的 WebGL 路径，避免把体验验证绑定在 WebGPU 可用性上 |
+| 运行环境 | Node.js ≥ 22.13；M1-01 使用 24.15.0 | 技术基线 | 与当前站点工具链的引擎要求一致 |
+| 语言 | TypeScript 5.9.3 严格模式 | 技术基线 | 数据语义复杂，需要在渲染前发现字段和状态错误 |
+| 构建与路由 | vinext 0.0.50 + Vite 8.0.13 | 技术基线 | 生成可部署的单路由站点；类型检查独立执行 |
+| UI 层 | React 19.2.6 负责语义外壳与状态；DOM/CSS 负责信息层 | 技术基线 | 3D 场景仍由独立命令式渲染器管理，避免逐帧状态进入 React |
+| 3D 层 | Three.js 0.185.1 `WebGLRenderer` | 技术基线 | P0 优先稳定的 WebGL 路径，避免把体验验证绑定在 WebGPU 可用性上 |
 | WebGPU | 单独实验，不作为 P0 验收前提 | 验证假设 | 可测试未来迁移收益，但不得产生两套业务语义 |
-| UI 层 | DOM/CSS + 小型显式状态容器；P0 不预设重型 UI 框架 | 技术基线 | 叠加控件有限，先减少场景状态与 UI 状态的重复 |
 | 场景模型 | 单场景、单数据源、多相机姿态 | 技术基线 | 直接对应“同一条河的三种观看角度” |
 | 动画 | 固定逻辑时钟 + 渲染插值 | 技术基线 | 支持回放、拖动年份和确定性测试 |
 | 数据 | 本地 JSON/TS 夹具，经校验后进入规范化运行时存储 | 技术基线 | P0 不需要后端，但需要从一开始约束语义 |
@@ -57,6 +58,22 @@
 | 视觉/性能测试 | 固定种子、固定视口、状态截图和浏览器采样 | 技术基线 | 使实验结果可重复比较 |
 
 Vite 官方文档说明其可直接处理 TypeScript，但只负责转译而不做类型检查，因此 P0 的验证命令必须单独运行 `tsc --noEmit`。Three.js 的 `WebGLRenderer` 提供绘制调用、点、线、三角形和资源统计；这些数据可进入原型调试面板。WebGPU 渲染器具备 WebGL 2 后端路径，但本轮仍将 WebGL 作为明确基线，避免兼容回退掩盖实验条件。参考 [Vite TypeScript 说明](https://vite.dev/guide/features.html#typescript)、[Three.js WebGLRenderer](https://threejs.org/docs/pages/WebGLRenderer.html) 与 [Three.js WebGPURenderer](https://threejs.org/docs/pages/WebGPURenderer.html)。
+
+### 3.1 P0 已实现工程切面
+
+```text
+app/
+  history-river.tsx       三维场景、状态控制、声音占位与指标面板
+  page.tsx                单路由入口与页面元数据
+  globals.css             幽玄空间、信息层与桌面布局
+lib/history/
+  model.ts                模拟人物、事件、关系、投影与不变量
+tests/
+  history-model.test.ts   数据、时间、聚集与导览状态测试
+  rendered-html.test.mjs  服务端页面与模板清理测试
+```
+
+React 只提交低频体验状态和可访问 DOM；Three.js 在自己的动画循环中读取状态引用、更新 GPU 缓冲与相机。渲染统计通过 `renderer.info` 进入只读指标栏，不反向驱动视觉效果。
 
 ## 4. 总体架构
 
@@ -532,7 +549,7 @@ notes / visible artifacts:
 - 生产级可观测性、错误上报、隐私和内容发布；
 - 静态回退、无障碍替代视图与未来移动端架构。
 
-## 15. 工程进入条件
+## 15. 工程进入条件与当前状态
 
 开始 `M1-01-T03` 前必须满足：
 
@@ -542,6 +559,8 @@ notes / visible artifacts:
 4. 建立类型检查、构建与数据不变量测试命令；
 5. 先完成 S0–S2 的最短垂直切片，再扩展人物和思想关系；
 6. 每完成一个 Task 将结果、验证和阻塞追加到 `work-log.md`。
+
+以上条件均已满足，`M1-01-T03` 于 2026-07-16 完成。单设备性能与交互结果记录在 [当前迭代验证记录](./iterations/current/validation.md)，尚未完成的规模夹具、集成显卡和真实用户观察仍属于 T04，不得视为长期性能结论。
 
 ## 16. 技术参考
 
