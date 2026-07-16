@@ -380,6 +380,7 @@ export function HistoryRiver() {
         varying float vAcross;
         varying float vFade;
         varying float vEmph;
+        varying float vEventAffinity;
 
         uniform float uOpacity;
         uniform float uGlowScale;
