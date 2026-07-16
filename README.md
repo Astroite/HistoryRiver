@@ -28,6 +28,7 @@ npm test
 
 - 产品与体验：[docs/design.md](./docs/design.md)
 - 视觉设计基线：[docs/visual-design.md](./docs/visual-design.md)
+- 历史地理连续体数据：[docs/geography-data.md](./docs/geography-data.md)
 - 技术基线：[docs/tech.md](./docs/tech.md)
 - 当前迭代：[docs/iterations/current/README.md](./docs/iterations/current/README.md)
 

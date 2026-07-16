@@ -29,9 +29,41 @@ export interface HistoryPostProcessing {
 
 const WATERFALL_CENTER_X = 6;
 const CELESTIAL = new THREE.Color(0xa9c5dc);
-const RIVER_BLUE = new THREE.Color(0x789cb9);
 const IVORY = new THREE.Color(0xf3ebdd);
 const MEMORY_GOLD = new THREE.Color(0xe7cca0);
+
+// 人民光海：一片无边无际、由无数短丝线铺满的三维光海——不渲染任何水体面片。
+// 单根丝线很短（约 10–30 单位，象征一段人生片段）；多根短丝线错落汇聚、首尾续接，
+// 才形成看上去更长的粗线条，象征家族的代际传承。海面代表 1949「当下」；
+// 海面之下越深越淡，表示不可知的未来。海域向四周远远铺开，边缘没入雾中形成无际地平。
+const SEA_BASE_Y = -1.15;
+// 海域向四周远远铺开，远超可视范围；边缘由视距淡出（uFadeNear..uFadeFar）没入黑暗，
+// 形成无边无际的地平线，而非有限矩形的硬边。
+const SEA_X_HALF = 520;
+const SEA_Z_MIN = -360;
+const SEA_Z_MAX = 440;
+// 视距淡出区间（相机空间 -z）：近处满显，超出后渐隐为零，等价于加色混合下的消隐。
+const SEA_FADE_NEAR = 210;
+const SEA_FADE_FAR = 470;
+// 海面之下延伸的"未来"体量：丝线可下沉到此深度，越深越淡。
+const SEA_DEPTH_BELOW = 52;
+// 单根短丝线长度（世界单位）随机区间：约定 1 单位≈1 年，故单段人生片段约 10–30 年。
+const SEA_THREAD_LEN_MIN = 10;
+const SEA_THREAD_LEN_MAX = 30;
+
+// 海浪高度场：多组正弦叠加的 GLSL 函数，流线丝线与浪花点云共用，保证同一片海协同起伏。
+// 振幅较大以形成参考图中滚动的金色波脊（丘状涌浪），而非细碎涟漪。
+const OCEAN_HEIGHT_GLSL = `
+  float oceanHeight(vec2 q) {
+    float t = uTime * 0.00035 * uFlow;
+    float h = 0.0;
+    h += sin(q.x * 0.026 + q.y * 0.016 + t * 1.05) * 3.4;
+    h += sin(q.y * 0.030 - t * 0.85) * 2.4;
+    h += sin((q.x * 0.018 - q.y * 0.024) + t * 1.40) * 1.7;
+    h += sin((q.x * 0.070 + q.y * 0.060) + t * 2.10) * 0.7;
+    return h * uAmp;
+  }
+`;
 
 function seededRandom(seed: number): () => number {
   let value = seed >>> 0;
@@ -316,102 +348,281 @@ function createWaterfallParticles(
   return { object, material };
 }
 
-function seaPoint(lane: number, t: number, phase: number): THREE.Vector3 {
-  const spread = 3.5 + Math.pow(t, 1.42) * 92;
-  const lateralFlow =
-    Math.sin(t * (6.2 + phase * 4.2) + phase * 12) * (0.62 + t * 7.4);
-  const channelMeander =
-    Math.sin(t * Math.PI) * (phase - 0.5) * (7 + Math.abs(lane) * 19);
-  return new THREE.Vector3(
-    WATERFALL_CENTER_X + lane * spread + lateralFlow + channelMeander,
-    -1.05 + Math.sin(t * 14 + phase * 9) * 0.075 + t * 0.42,
-    -3 + Math.pow(t, 1.08) * 150,
-  );
-}
-
-function createSeaFibers(
+function createFlowingOcean(
   random: () => number,
   quality: SceneQuality,
-): { object: THREE.LineSegments; material: THREE.LineBasicMaterial } {
-  const flowCount = quality === "default" ? 320 : 150;
-  const segmentCount = quality === "default" ? 58 : 38;
-  const positions: number[] = [];
-  const colors: number[] = [];
-  const channelCenters = [-0.94, -0.74, -0.53, -0.31, -0.08, 0.14, 0.38, 0.61, 0.82, 0.97];
+): { object: THREE.LineSegments; material: THREE.ShaderMaterial } {
+  // 纯丝线三维光海：铺满无边海域，无任何水体面片。
+  // - 每根丝线很短（SEA_THREAD_LEN_MIN..MAX 单位），象征一段人生片段。
+  // - 一个家族 = 多段短丝线错落汇聚（首尾续接 + 横向错位）成的一条更长的粗线条，象征代际传承。
+  // - 海面(y≈SEA_BASE_Y)代表 1949「当下」；丝线可沉入海面之下，越深越淡，表示不可知的未来。
+  const lineageCount = quality === "default" ? 4200 : 1600;
+  const xMin = WATERFALL_CENTER_X - SEA_X_HALF;
+  const width = SEA_X_HALF * 2;
+  const zMin = SEA_Z_MIN;
+  const zRange = SEA_Z_MAX - SEA_Z_MIN;
 
-  for (let flow = 0; flow < flowCount; flow += 1) {
-    const channel = channelCenters[flow % channelCenters.length];
-    const lane = THREE.MathUtils.clamp(
-      channel + (random() - 0.5) * (0.08 + random() * 0.12),
-      -1,
-      1,
-    );
-    const phase = random();
-    const brightness = 0.34 + random() * 0.72;
-    const goldPersistence = random() < 0.34 ? 0.28 + random() * 0.38 : 0;
-    const startT = random() * 0.08;
-    const endT = 0.76 + random() * 0.24;
-    for (let segment = 0; segment < segmentCount; segment += 1) {
-      const t0 = THREE.MathUtils.lerp(startT, endT, segment / segmentCount);
-      const t1 = THREE.MathUtils.lerp(startT, endT, (segment + 1) / segmentCount);
-      const start = seaPoint(lane, t0, phase);
-      const end = seaPoint(lane, t1, phase);
-      positions.push(start.x, start.y, start.z, end.x, end.y, end.z);
-      const c0 = MEMORY_GOLD.clone().lerp(RIVER_BLUE, smoothstep(0.18, 0.92, t0));
-      const c1 = MEMORY_GOLD.clone().lerp(RIVER_BLUE, smoothstep(0.18, 0.92, t1));
-      c0.lerp(MEMORY_GOLD, goldPersistence * (0.45 + t0 * 0.55));
-      c1.lerp(MEMORY_GOLD, goldPersistence * (0.45 + t1 * 0.55));
-      c0.lerp(IVORY, (1 - Math.abs(lane)) * 0.15).multiplyScalar(brightness);
-      c1.lerp(IVORY, (1 - Math.abs(lane)) * 0.15).multiplyScalar(brightness);
-      colors.push(c0.r, c0.g, c0.b, c1.r, c1.g, c1.b);
+  const positions: number[] = [];
+  const brights: number[] = [];
+  const depths: number[] = []; // 0 = 海面(当下) .. 1 = 最深(不可知的未来)
+
+  for (let lineage = 0; lineage < lineageCount; lineage += 1) {
+    // 家族起点铺满整片平面。丝线大致沿波脊横向流动（±x），带小幅摆动，贴合涌浪走向。
+    let x = xMin + width * random();
+    let z = zMin + zRange * random();
+    let heading = (random() < 0.5 ? 0 : Math.PI) + (random() - 0.5) * 0.9;
+
+    const lineageBright = 0.26 + random() * 0.5 + (random() < 0.12 ? 0.7 : 0);
+    const generations = 3 + Math.floor(random() * 5); // 每个家族 3..7 段续接
+    // 该家族并行子丝线数量：错落叠加使续接的长条看上去更粗。
+    const strands = 2 + Math.floor(random() * 2);
+    let depth = random() * 0.12;
+
+    for (let generation = 0; generation < generations; generation += 1) {
+      // 单段短丝线长度：10..30 单位。
+      const threadLen =
+        SEA_THREAD_LEN_MIN + random() * (SEA_THREAD_LEN_MAX - SEA_THREAD_LEN_MIN);
+      const steps = 4 + Math.floor(random() * 2); // 4..5 段折线足够表现短丝线
+      const along = threadLen / steps;
+      const meanderAmp = 0.8 + random() * 2.2;
+      const meanderFreq = 0.6 + random() * 1.7;
+      const phase = random() * Math.PI * 2;
+      // 这一代整体下沉量：多数近海面(已知)，少数沉向未来(变淡)。
+      const depthGain = random() < 0.5 ? random() * 0.1 : 0;
+      // 换代处横向错位（错落），使续接点重叠汇聚而非直线拼接。
+      const handoffPerpX = Math.sin(heading);
+      const handoffPerpZ = -Math.cos(heading);
+      const handoff = (random() - 0.5) * 2.2;
+      x += handoffPerpX * handoff;
+      z += handoffPerpZ * handoff;
+      const startX = x;
+      const startZ = z;
+      const startHeading = heading;
+      const startDepth = depth;
+
+      for (let strand = 0; strand < strands; strand += 1) {
+        // 每根并行子丝线相对家族中心的小横向偏移与亮度扰动。
+        const strandOffset = (strand - (strands - 1) / 2) * (0.4 + random() * 0.5);
+        const strandBright = lineageBright * (0.8 + random() * 0.45);
+        let sHeading = startHeading;
+        let px = startX + handoffPerpX * strandOffset;
+        let pz = startZ + handoffPerpZ * strandOffset;
+        let pDepth = startDepth;
+        let py = SEA_BASE_Y - pDepth * SEA_DEPTH_BELOW;
+        for (let step = 1; step <= steps; step += 1) {
+          const s = step / steps;
+          sHeading += (random() - 0.5) * 0.12; // 缓慢弯曲
+          const dirX = Math.cos(sHeading);
+          const dirZ = Math.sin(sHeading);
+          const perpX = Math.sin(sHeading);
+          const perpZ = -Math.cos(sHeading);
+          const wob = Math.sin(s * Math.PI * meanderFreq * 2 + phase) * meanderAmp;
+          const nx = px + dirX * along + perpX * wob * 0.12;
+          const nz = pz + dirZ * along + perpZ * wob * 0.12;
+          const nDepth = Math.min(0.98, startDepth + depthGain * s);
+          const ny = SEA_BASE_Y - nDepth * SEA_DEPTH_BELOW;
+          positions.push(px, py, pz, nx, ny, nz);
+          brights.push(strandBright, strandBright);
+          depths.push(pDepth, nDepth);
+          px = nx;
+          pz = nz;
+          py = ny;
+          pDepth = nDepth;
+        }
+      }
+
+      // 家族中心推进到本段短丝线终点，供下一段续接（沿平均朝向前进一整段长度）。
+      x += Math.cos(startHeading) * threadLen;
+      z += Math.sin(startHeading) * threadLen;
+      heading = startHeading;
+      depth = Math.min(0.96, depth + depthGain);
     }
   }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  const material = new THREE.LineBasicMaterial({
-    vertexColors: true,
+  geometry.setAttribute("aBright", new THREE.Float32BufferAttribute(brights, 1));
+  geometry.setAttribute("aDepth", new THREE.Float32BufferAttribute(depths, 1));
+
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uFlow: { value: 1 },
+      uAmp: { value: 1 },
+      uOpacity: { value: 0.22 },
+      // 金色光海：谷底深金、脊面亮金、波峰近乎白金；沉入未来时转为冷暗。
+      uNear: { value: new THREE.Color(0xffcf6a) },
+      uFar: { value: new THREE.Color(0x9a6a24) },
+      uCrest: { value: new THREE.Color(0xfff2c8) },
+      uDeep: { value: new THREE.Color(0x140d05) },
+      uZRange: { value: new THREE.Vector2(SEA_Z_MIN, SEA_Z_MAX) },
+      // 视距淡出：超出 uFade.x 起渐隐，至 uFade.y 归零，使海域没入黑暗形成无际地平。
+      uFade: { value: new THREE.Vector2(SEA_FADE_NEAR, SEA_FADE_FAR) },
+    },
+    vertexShader: `
+      attribute float aBright;
+      attribute float aDepth;
+
+      uniform float uTime;
+      uniform float uFlow;
+      uniform float uAmp;
+      uniform float uOpacity;
+      uniform vec3 uNear;
+      uniform vec3 uFar;
+      uniform vec3 uCrest;
+      uniform vec3 uDeep;
+      uniform vec2 uZRange;
+      uniform vec2 uFade;
+
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      ${OCEAN_HEIGHT_GLSL}
+
+      void main() {
+        vec3 p = position;
+        // 波浪只作用于接近海面的丝线；越深越平静(未来不可知、无涌动)。
+        float surfaceness = 1.0 - clamp(aDepth, 0.0, 1.0);
+        float h = oceanHeight(p.xz) * surfaceness;
+        p.y += h;
+        float t = uTime * 0.00035 * uFlow;
+        p.x += sin(p.x * 0.03 + t * 1.05) * 0.6 * surfaceness;
+        p.z += sin(p.z * 0.034 - t * 0.85) * 0.5 * surfaceness;
+
+        float d = clamp((p.z - uZRange.x) / (uZRange.y - uZRange.x), 0.0, 1.0);
+        // 沿深度做冷暖：远处略沉，近处更亮金。
+        vec3 base = mix(uNear, uFar, smoothstep(0.1, 0.95, d));
+        // 波峰高度归一（振幅约 ±8）：脊顶提亮为白金。
+        float crest = smoothstep(1.5, 6.5, h);
+        vec3 col = mix(base, uCrest, crest * 0.8) * aBright;
+        // 沉入未来：变冷变暗。
+        col = mix(col, uDeep, aDepth * 0.8);
+        vColor = col;
+
+        float depthFade = mix(1.0, 0.04, aDepth); // 越深越淡
+
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        // 视距淡出：远处渐隐至零，海域没入黑暗，形成无边地平线（取代有限平面的硬边）。
+        float viewDist = -mv.z;
+        float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, viewDist);
+        // 波脊更亮、波谷偏暗，强化滚动涌浪的体积感。
+        vAlpha = uOpacity * horizonFade * depthFade * (0.35 + crest * 1.1);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        if (vAlpha <= 0.003) discard;
+        gl_FragColor = vec4(vColor, vAlpha);
+      }
+    `,
     transparent: true,
-    opacity: 0.17,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
+
   const object = new THREE.LineSegments(geometry, material);
   object.renderOrder = 2;
   object.frustumCulled = false;
   return { object, material };
 }
 
-function createSeaParticles(
+function createSeaFoam(
   random: () => number,
   quality: SceneQuality,
-): { object: THREE.Points; material: THREE.PointsMaterial } {
-  const count = quality === "default" ? 22000 : 7000;
+): { object: THREE.Points; material: THREE.ShaderMaterial } {
+  const count = quality === "default" ? 78000 : 26000;
+  const xMin = WATERFALL_CENTER_X - SEA_X_HALF;
+  const width = SEA_X_HALF * 2;
+  const zRange = SEA_Z_MAX - SEA_Z_MIN;
   const positions = new Float32Array(count * 3);
-  const colors = new Float32Array(count * 3);
+  const brights = new Float32Array(count);
+  const drips = new Float32Array(count); // 0 = 贴海面的金沙；>0 = 从波下垂落的光丝(下坠深度)
   for (let index = 0; index < count; index += 1) {
-    const t = Math.sqrt(random());
-    const lane = (random() + random() - 1) * 1.02;
-    const point = seaPoint(lane, t, random());
-    positions[index * 3] = point.x + (random() - 0.5) * (0.25 + t * 1.8);
-    positions[index * 3 + 1] = point.y + random() * 0.18;
-    positions[index * 3 + 2] = point.z + (random() - 0.5) * (0.4 + t * 1.4);
-    const color = MEMORY_GOLD.clone().lerp(RIVER_BLUE, smoothstep(0.16, 0.92, t));
-    if (random() < 0.28) color.lerp(MEMORY_GOLD, 0.34 + random() * 0.32);
-    color.multiplyScalar(0.48 + random() * 0.88);
-    colors[index * 3] = color.r;
-    colors[index * 3 + 1] = color.g;
-    colors[index * 3 + 2] = color.b;
+    // 浪花铺满整片海面（表征当下的海面辉光），均匀散布并带轻微抖动。
+    positions[index * 3] = xMin + width * random();
+    positions[index * 3 + 1] = SEA_BASE_Y;
+    positions[index * 3 + 2] = SEA_Z_MIN + zRange * random();
+    brights[index] = 0.5 + random() * 1.15;
+    // 约 18% 的颗粒作为"垂落光丝"，从海面向下悬垂不同长度。
+    drips[index] = random() < 0.18 ? Math.pow(random(), 1.6) * 34 : 0;
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  const material = new THREE.PointsMaterial({
-    vertexColors: true,
-    size: 0.18,
+  geometry.setAttribute("aBright", new THREE.BufferAttribute(brights, 1));
+  geometry.setAttribute("aDrip", new THREE.BufferAttribute(drips, 1));
+
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uFlow: { value: 1 },
+      uAmp: { value: 1 },
+      uOpacity: { value: 0.7 },
+      uSize: { value: quality === "default" ? 1.7 : 1.9 },
+      // 金色浪花：海面亮金，远处深金，波峰白金。
+      uNear: { value: new THREE.Color(0xffd77a) },
+      uFar: { value: new THREE.Color(0xb07d2e) },
+      uCrest: { value: new THREE.Color(0xfff4d2) },
+      uZRange: { value: new THREE.Vector2(SEA_Z_MIN, SEA_Z_MAX) },
+      uFade: { value: new THREE.Vector2(SEA_FADE_NEAR, SEA_FADE_FAR) },
+    },
+    vertexShader: `
+      attribute float aBright;
+      attribute float aDrip;
+
+      uniform float uTime;
+      uniform float uFlow;
+      uniform float uAmp;
+      uniform float uOpacity;
+      uniform float uSize;
+      uniform vec3 uNear;
+      uniform vec3 uFar;
+      uniform vec3 uCrest;
+      uniform vec2 uZRange;
+      uniform vec2 uFade;
+
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      ${OCEAN_HEIGHT_GLSL}
+
+      void main() {
+        vec3 p = position;
+        float h = oceanHeight(p.xz);
+        p.y += h;
+        // 垂落光丝：从海面向下悬垂，并随时间缓慢滴落循环。
+        float t = uTime * 0.00035 * uFlow;
+        float sag = aDrip * (0.6 + 0.4 * sin(t * 1.7 + p.x * 0.05));
+        p.y -= sag;
+        float d = clamp((p.z - uZRange.x) / (uZRange.y - uZRange.x), 0.0, 1.0);
+        vec3 base = mix(uNear, uFar, smoothstep(0.1, 0.95, d));
+        float crest = smoothstep(1.5, 6.5, h);
+        vColor = mix(base, uCrest, crest * 0.75) * aBright;
+        // 垂落段随下坠变暗，融入下方黑暗。
+        float dripFade = 1.0 - smoothstep(0.0, 34.0, sag) * 0.85;
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        // 视距淡出：远处渐隐至零，浪花没入黑暗，与丝线海协同形成无际地平。
+        float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, -mv.z);
+        vAlpha = uOpacity * horizonFade * dripFade * (0.4 + crest * 1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = clamp(uSize * (300.0 / max(1.0, -mv.z)), 0.6, 3.6);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        float distanceToCenter = length(gl_PointCoord - vec2(0.5));
+        float alpha = (1.0 - smoothstep(0.1, 0.5, distanceToCenter)) * vAlpha;
+        if (alpha <= 0.003) discard;
+        gl_FragColor = vec4(vColor, alpha);
+      }
+    `,
     transparent: true,
-    opacity: 0.56,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
@@ -553,20 +764,6 @@ export function createHistoryVisuals(options: {
   const cloudTexture = createCloudTexture(seed);
   const radialTexture = createRadialTexture();
 
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(400, 320),
-    new THREE.MeshBasicMaterial({
-      color: 0x081722,
-      transparent: true,
-      opacity: 0.52,
-      depthWrite: false,
-    }),
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.set(0, -1.55, 40);
-  ground.renderOrder = -2;
-  root.add(ground);
-
   const stars = createStars(random, topY, quality);
   stars.renderOrder = -1;
   root.add(stars);
@@ -574,9 +771,9 @@ export function createHistoryVisuals(options: {
   const clouds = createClouds(random, cloudTexture, topY, quality);
   root.add(clouds.group);
 
-  const seaFibers = createSeaFibers(random, quality);
-  const seaParticles = createSeaParticles(random, quality);
-  root.add(seaFibers.object, seaParticles.object);
+  const flowingOcean = createFlowingOcean(random, quality);
+  const seaFoam = createSeaFoam(random, quality);
+  root.add(flowingOcean.object, seaFoam.object);
 
   const waterfallFibers = createWaterfallFibers(random, topY, quality);
   const waterfallParticles = createWaterfallParticles(random, topY, quality);
@@ -657,8 +854,18 @@ export function createHistoryVisuals(options: {
       waterfallParticles.material.uniforms.uFlow.value = lowMotion ? 0 : 1;
       waterfallParticles.material.uniforms.uOpacity.value = 0.68 * visibility;
       waterfallFibers.material.opacity = 0.085 * visibility;
-      seaParticles.material.opacity = 0.74 * visibility;
-      seaFibers.material.opacity = 0.04 * visibility;
+
+      // 编织海面与浪花：uTime 驱动波浪仿真，低动态偏好时冻结起伏但保留静态海面。
+      const oceanFlow = lowMotion ? 0 : 1;
+      const oceanAmp = lowMotion ? 0.35 : 1;
+      flowingOcean.material.uniforms.uTime.value = now;
+      flowingOcean.material.uniforms.uFlow.value = oceanFlow;
+      flowingOcean.material.uniforms.uAmp.value = oceanAmp;
+      flowingOcean.material.uniforms.uOpacity.value = 0.28 * visibility;
+      seaFoam.material.uniforms.uTime.value = now;
+      seaFoam.material.uniforms.uFlow.value = oceanFlow;
+      seaFoam.material.uniforms.uAmp.value = oceanAmp;
+      seaFoam.material.uniforms.uOpacity.value = 0.8 * visibility;
 
       const breath = lowMotion ? 1 : 1 + Math.sin(now * 0.00045) * 0.045;
       sourceGlow.scale.set(42 * breath, 48 * breath, 1);

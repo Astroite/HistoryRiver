@@ -8,12 +8,12 @@ import {
   createHistoryPostProcessing,
   createHistoryVisuals,
 } from "@/app/history-river-visuals";
+import { createHistoryGeography } from "@/app/history-geography-visuals";
 
 import {
   DEFAULT_FOCUS_YEAR,
   OBSERVATION_SPAN,
   RIVER_START_YEAR,
-  abstractChina,
   buildFigureThreads,
   guideStateAtSeconds,
   historicalYearToY,
@@ -210,6 +210,8 @@ export function HistoryRiver() {
       quality,
     });
     riverGroup.add(visuals.root);
+    const geography = createHistoryGeography();
+    riverGroup.add(geography.root);
 
     // --- 人物丝线（带状几何）：每个人物一根贯穿生卒的主题色丝线 ------------------
     const threadData = buildFigureThreads(fixture, {
@@ -526,32 +528,6 @@ export function HistoryRiver() {
       eventClouds.push(cloud);
     }
 
-    // --- 抽象中国地理方位图：海岸线 + 黄河 + 长江（俯视切片的方位参照）---------
-    const geographyGroup = new THREE.Group();
-    const addGeographyLine = (
-      coordinates: ReadonlyArray<readonly [number, number]>,
-      color: number,
-      baseOpacity: number,
-    ) => {
-      const points = coordinates.map(([x, z]) => new THREE.Vector3(x, 0, z));
-      const curve = new THREE.CatmullRomCurve3(points);
-      const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints(curve.getPoints(96)),
-        new THREE.LineBasicMaterial({
-          color,
-          transparent: true,
-          opacity: baseOpacity,
-          depthWrite: false,
-        }),
-      );
-      line.userData.baseOpacity = baseOpacity;
-      geographyGroup.add(line);
-    };
-    addGeographyLine(abstractChina.coastline, 0x7893a5, 1); // 海岸线
-    addGeographyLine(abstractChina.rivers.yellow, 0xc4ad87, 1); // 黄河（暖）
-    addGeographyLine(abstractChina.rivers.yangtze, 0x789cb9, 1); // 长江（冷）
-    riverGroup.add(geographyGroup);
-
     const raycaster = new THREE.Raycaster();
     raycaster.params.Line = { threshold: 0.42 };
     const pointer = new THREE.Vector2();
@@ -634,7 +610,7 @@ export function HistoryRiver() {
       }
       if (currentView === "slice") {
         return {
-          position: new THREE.Vector3(0.01, focusY + 31, 0.01),
+          position: new THREE.Vector3(0.01, focusY + 42, 0.01),
           target: new THREE.Vector3(0, focusY, 0),
           up: new THREE.Vector3(0, 0, -1),
         };
@@ -705,21 +681,8 @@ export function HistoryRiver() {
       }
 
       const focus = focusYearRef.current;
-      const focusY = historicalYearToY(focus);
-      geographyGroup.position.y = focusY + 0.02;
       const currentView = viewRef.current;
-
-      const showGeography =
-        currentView === "slice" ||
-        currentView === "person-focus" ||
-        currentView === "relation-focus";
-      geographyGroup.visible = showGeography;
-      const geographyOpacity =
-        currentView === "slice" ? 0.32 : currentView === "person-focus" ? 0.18 : 0.1;
-      for (const child of geographyGroup.children) {
-        ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity =
-          geographyOpacity;
-      }
+      geography.update(focus, currentView, lowMotionRef.current);
 
       // 丝线 uniform：维度权重、汇流程度与显影参数平滑插值
       const lerpK = lowMotionRef.current ? 0.05 : 0.1;

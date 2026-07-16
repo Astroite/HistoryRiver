@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildGeographyVolume,
+  geographyContourAt,
+  geographyKeyframes,
+  geographyProfileAt,
+} from "../src/lib/history/geography-volume.ts";
+import {
   activeCurveAt,
   buildFigureThreads,
   createLifePath,
@@ -137,4 +143,93 @@ test("each figure thread starts at birth and ends at death on the shared time ax
     assert.ok(Math.abs(firstY - historicalYearToY(person.birthYear)) < 1e-3);
     assert.ok(Math.abs(lastY - historicalYearToY(person.deathYear)) < 1e-3);
   }
+});
+
+test("geography keyframes span the full work and remain chronologically ordered", () => {
+  assert.equal(geographyKeyframes[0].year, -2700);
+  assert.equal(geographyKeyframes.at(-1)?.year, 1949);
+  for (let index = 1; index < geographyKeyframes.length; index += 1) {
+    assert.ok(geographyKeyframes[index].year > geographyKeyframes[index - 1].year);
+  }
+  assert.ok(geographyKeyframes.every((keyframe) => keyframe.prototypeOnly));
+});
+
+test("annual geography profiles interpolate smoothly between source keyframes", () => {
+  const before = geographyProfileAt(-516);
+  const current = geographyProfileAt(-515);
+  const after = geographyProfileAt(-514);
+  for (const key of Object.keys(current.weights) as Array<keyof typeof current.weights>) {
+    assert.ok(Math.abs(current.weights[key] - before.weights[key]) < 0.01, key);
+    assert.ok(Math.abs(after.weights[key] - current.weights[key]) < 0.01, key);
+  }
+});
+
+test("every requested year produces a closed abstract geography contour", () => {
+  const early = geographyContourAt(-2700, 48);
+  const later = geographyContourAt(618, 48);
+  assert.equal(early.length, 48);
+  assert.equal(later.length, 48);
+  assert.ok(early.every(([x, z]) => Number.isFinite(x) && Number.isFinite(z)));
+  assert.ok(later.every(([x, z]) => Number.isFinite(x) && Number.isFinite(z)));
+  const radialExtent = (contour: ReadonlyArray<readonly [number, number]>) =>
+    Math.max(...contour.map(([x, z]) => Math.hypot(x, z)));
+  assert.ok(radialExtent(later) > radialExtent(early));
+});
+
+test("adjacent annual contours stay continuous with no per-year jumps", () => {
+  const samples = 48;
+  // 相邻年份轮廓必须逐点接近，才能稳定连成纵向纤维、不在镜头移动时跳变。
+  for (const baseYear of [-2000, -770, -221, 618, 1271, 1911]) {
+    const current = geographyContourAt(baseYear, samples);
+    const next = geographyContourAt(baseYear + 1, samples);
+    assert.equal(current.length, samples);
+    assert.equal(next.length, samples);
+    let maxShift = 0;
+    for (let index = 0; index < samples; index += 1) {
+      maxShift = Math.max(
+        maxShift,
+        Math.hypot(next[index][0] - current[index][0], next[index][1] - current[index][1]),
+      );
+    }
+    assert.ok(maxShift < 0.25, `year ${baseYear}→${baseYear + 1} shift ${maxShift}`);
+  }
+});
+
+test("volume geometry carries per-vertex uncertainty aligned with profiles", () => {
+  const startYear = -2700;
+  const endYear = -2680;
+  const volume = buildGeographyVolume({
+    startYear,
+    endYear,
+    contourSamples: 24,
+    longitudinalStride: 4,
+  });
+  assert.equal(volume.sliceUncertainty.length, volume.sliceYears.length);
+  assert.equal(
+    volume.longitudinalUncertainty.length,
+    volume.longitudinalYears.length,
+  );
+  for (let vertex = 0; vertex < volume.sliceUncertainty.length; vertex += 1) {
+    const value = volume.sliceUncertainty[vertex];
+    assert.ok(value >= 0 && value <= 1, `uncertainty in range: ${value}`);
+    const expected = geographyProfileAt(volume.sliceYears[vertex]).uncertainty;
+    assert.ok(Math.abs(value - expected) < 1e-6);
+  }
+  // 早期资料最稀疏：起始年份的不确定度应高于统一王朝时期。
+  assert.ok(geographyProfileAt(startYear).uncertainty > geographyProfileAt(-221).uncertainty);
+});
+
+test("geography volume stacks exactly one horizontal contour per integer year", () => {
+  const volume = buildGeographyVolume({
+    startYear: -3,
+    endYear: 3,
+    contourSamples: 24,
+    longitudinalStride: 4,
+  });
+  assert.equal(volume.annualSliceCount, 7);
+  assert.equal(volume.sliceSegmentCount, 7 * 24);
+  assert.equal(volume.slicePositions.length, volume.sliceSegmentCount * 2 * 3);
+  assert.equal(volume.sliceYears[0], -3);
+  assert.equal(volume.sliceYears.at(-1), 3);
+  assert.ok(volume.longitudinalSegmentCount > 0);
 });
