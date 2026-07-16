@@ -192,3 +192,43 @@
 
 - 复测 C-03 与 C-04，确认事件聚集成为第一视觉重心，且人生线与思想线的线型和显隐层级清晰可辨；
 - 对比修正前后 S1、S2、S4 固定视口截图和绘制调用，确认减噪没有破坏窗口外生命延续与思想关系可发现性。
+
+## 2026-07-16｜工程重构：收敛进 src/ 布局
+
+### 决策
+
+- 将 `app/`、`lib/`、`worker/` 收敛进 `src/`；`build/` 更名为 `tooling/`（其内是自定义 Vite 插件源码，而非构建产物，改名后纳入 lint）。
+- vinext 0.0.50 自动检测 `src/app`（`node_modules/vinext/dist/index.js` 的 baseDir 解析：根无 `app/` 时回落到 `src`）。
+- 安全清理：`.codegraph/` 加入 `.gitignore`；删除无关的 `.vercel` 忽略项；刷新 worker 模板注释；README 增加 vinext+Vite+Cloudflare 技术栈说明。
+
+### 实质改动
+
+- `tsconfig.json` 别名 `@/*` → `./src/*`；`vite.config.ts` 的 worker `main` 与 sites 插件路径同步；`eslint.config.mjs` 去掉 `build/**` 忽略；`tests/*` 更新对 model 与 app 的路径引用。
+
+### 验证
+
+- `npm run typecheck`、`npm run build`（vinext 检测到 `App Router (src/app/)`）、`npm test`（页面 2/2）、`npm run lint` 全部通过。
+
+## 2026-07-16｜视觉重构：人物丝线化 + 可辨识抽象中国切片
+
+### 决策
+
+- 人物表现从“光点 + 独立人生悬丝”改为“每个人物即一根主题色丝线”，每一段的粗细与辉光表示其在该年份的影响力；保留一个焦点年份节点用于识别、拾取与“此刻此人”锚点。
+- 主题色按领域/学派分色系（思想/制度·政治/军事/文化·礼乐/技艺·民生），同领域共享色相、个体以明度/饱和度区分。
+- 俯视切片呈现可辨识的抽象中国（海岸线、黄河/长江、诸子百家邦国方位），丝线穿过人物当时的实际地理位置；保持“模拟数据”标注、无现代省界、无精确坐标。
+- 关闭 `tech.md §14.1` 的“人生悬丝渲染方式”待决项：采用批量 billboard 带状几何(ribbon) + 自定义着色器（逐顶点粗细/辉光）。
+
+### 实质改动
+
+- `model.ts`：新增 `Domain`/`RegionKey`、`domainHsl`/`themeColorFor`、`abstractChina`/`geoRegions`、`activeCurveAt`（被 `influenceAt` 与丝线共用）、`buildFigureThreads`（打包带状几何属性）；`personPositionAt` 改由邦国质心 lerp + 保留 wobble 与事件 pull。
+- `history-river.tsx`：以 ribbon `ShaderMaterial`（uniform 驱动维度权重、汇流 `uGeoSpread`、窗口淡出、宽度/辉光、选中/悬停强调）替换光点 `InstancedMesh` 与窗口化人生线段；新增焦点年份节点 `InstancedMesh`（识别 + 拾取）；地理曲线替换为 abstractChina；维度切换只改 uniform；删除 `selectedLifeLine`、`updateLifeWindowGeometry`。
+- 思想线保持 `AdditiveBlending`+细+亮，人物丝线用 `NormalBlending`+较宽 —— D-04 两类线区分成为结构性差异。
+
+### 验证
+
+- 自动：`npm run typecheck`、`npm test`（模型 12/12，含 `buildFigureThreads`/`activeCurveAt`/主题色/邦国锚定新增项；页面 2/2）、`npm run lint` 全部通过。
+- 浏览器走查（1280×720，SEED 240716）：S1 入流丝线显影、S2 观事俯视呈抽象中国且丝线在邦国位置聚散、S3 逐人选中丝线全长高亮而余者降噪、S4 溯源细亮思想线与较宽人物丝线可区分；运行时错误 0。
+
+### 待验证
+
+- 固定视口留证 C-01/C-03/C-04/C-07 复测；规模夹具（2,000 丝线 / ~80,000 顶点）与集成显卡对照；抽象中国地理线在明亮丝线背景下的可辨识度微调。
