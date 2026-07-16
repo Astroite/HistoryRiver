@@ -561,7 +561,15 @@ input:focus-visible {
   background: #668f92;
 }
 
-.visual-legend .person-dot {
+.visual-legend .person-thread {
+  width: 16px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(126, 200, 189, 0.35), #7ec8bd 55%, rgba(216, 182, 110, 0.9));
+  box-shadow: 0 0 6px rgba(126, 200, 189, 0.5);
+}
+
+.visual-legend .focus-node {
   width: 5px;
   height: 5px;
   border-radius: 50%;

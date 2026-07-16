@@ -9,7 +9,8 @@ import {
   DEFAULT_FOCUS_YEAR,
   OBSERVATION_SPAN,
   RIVER_START_YEAR,
-  createLifePath,
+  abstractChina,
+  buildFigureThreads,
   createObservationWindow,
   formatHistoricalYear,
   guideStateAtSeconds,
@@ -17,6 +18,7 @@ import {
   influenceAt,
   personPositionAt,
   prototypeFixture,
+  themeColorFor,
   type ExperienceState,
   type InfluenceDimension,
 } from "@/lib/history/model";
@@ -31,9 +33,9 @@ const stateLabels: Record<ExperienceState, string> = {
 
 const stateNotes: Record<ExperienceState, string> = {
   "river-overview": "站在今天，仰望九天长河",
-  "entering-window": "穿过光瀑，光丝逐渐显出姓名",
+  "entering-window": "穿过光瀑，丝线逐渐显出姓名",
   slice: "俯看山河，人物因事件聚散",
-  "person-focus": "沿一根悬丝，观看完整一生",
+  "person-focus": "沿一根丝线，观看完整一生",
   "relation-focus": "思想越过生命边界继续流动",
 };
 
@@ -43,6 +45,36 @@ const dimensionLabels: Record<InfluenceDimension, string> = {
   military: "军事",
   thought: "思想",
   culture: "文化",
+};
+
+// 维度 → 影响力权重目标（one-hot；culture 走独立通道）。切换维度只插值该目标。
+const dimensionTargets: Record<
+  InfluenceDimension,
+  { vec: readonly [number, number, number, number]; culture: number }
+> = {
+  overall: { vec: [1, 0, 0, 0], culture: 0 },
+  political: { vec: [0, 1, 0, 0], culture: 0 },
+  military: { vec: [0, 0, 1, 0], culture: 0 },
+  thought: { vec: [0, 0, 0, 1], culture: 0 },
+  culture: { vec: [0, 0, 0, 0], culture: 1 },
+};
+
+// 各体验状态下丝线的显影参数（宽度、辉光、整体不透明度、窗口外上下文亮度、汇流程度）。
+const threadStateStyle: Record<
+  ExperienceState,
+  {
+    width: number;
+    glow: number;
+    opacity: number;
+    context: number;
+    geoSpread: number;
+  }
+> = {
+  "river-overview": { width: 0.85, glow: 0.6, opacity: 0.55, context: 0, geoSpread: 0 },
+  "entering-window": { width: 1.1, glow: 1, opacity: 0.82, context: 0.22, geoSpread: 0.55 },
+  slice: { width: 1.5, glow: 1.2, opacity: 0.95, context: 0.34, geoSpread: 1 },
+  "person-focus": { width: 1.6, glow: 1.3, opacity: 1, context: 0.4, geoSpread: 1 },
+  "relation-focus": { width: 1.05, glow: 0.75, opacity: 0.5, context: 0.22, geoSpread: 1 },
 };
 
 interface RenderStats {
@@ -294,7 +326,7 @@ export function HistoryRiver() {
     renderer.domElement.className = "history-canvas";
     renderer.domElement.setAttribute(
       "aria-label",
-      "由人物光点、生命悬丝、事件点云和思想丝线构成的三维历史长河",
+      "由人物丝线、事件点云和思想丝线构成的三维历史长河；每根丝线是一个人物，粗细与辉光表示其影响力",
     );
     mount.appendChild(renderer.domElement);
 
@@ -393,123 +425,174 @@ export function HistoryRiver() {
     });
     riverGroup.add(new THREE.Points(seaGeometry, seaMaterial));
 
-    const lifeContextMaterial = new THREE.LineBasicMaterial({
-      color: 0x456d73,
+    // --- 人物丝线（带状几何）：每个人物一根贯穿生卒的主题色丝线 ------------------
+    const threadData = buildFigureThreads(fixture, {
+      stepYears: quality === "default" ? 1 : 2,
+    });
+    const threadGeometry = new THREE.BufferGeometry();
+    threadGeometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(threadData.positions, 3),
+    );
+    threadGeometry.setAttribute(
+      "aTangent",
+      new THREE.BufferAttribute(threadData.tangents, 3),
+    );
+    threadGeometry.setAttribute("aSide", new THREE.BufferAttribute(threadData.sides, 1));
+    threadGeometry.setAttribute(
+      "aActiveCurve",
+      new THREE.BufferAttribute(threadData.activeCurve, 1),
+    );
+    threadGeometry.setAttribute(
+      "aInfluence",
+      new THREE.BufferAttribute(threadData.baseInfluence, 4),
+    );
+    threadGeometry.setAttribute(
+      "aCulture",
+      new THREE.BufferAttribute(threadData.cultureInfluence, 1),
+    );
+    threadGeometry.setAttribute(
+      "aThemeColor",
+      new THREE.BufferAttribute(threadData.themeColor, 3),
+    );
+    threadGeometry.setAttribute("aYear", new THREE.BufferAttribute(threadData.years, 1));
+    threadGeometry.setAttribute("aLane", new THREE.BufferAttribute(threadData.lanes, 1));
+    threadGeometry.setAttribute(
+      "aEntityId",
+      new THREE.BufferAttribute(threadData.entityIds, 1),
+    );
+    threadGeometry.setIndex(new THREE.BufferAttribute(threadData.index, 1));
+
+    const threadMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uDimWeights: { value: new THREE.Vector4(1, 0, 0, 0) },
+        uDimCulture: { value: 0 },
+        uWidthScale: { value: threadStateStyle["river-overview"].width },
+        uGlowScale: { value: threadStateStyle["river-overview"].glow },
+        uOpacity: { value: threadStateStyle["river-overview"].opacity },
+        uContextOpacity: { value: threadStateStyle["river-overview"].context },
+        uGeoSpread: { value: 0 },
+        uFocusYear: { value: DEFAULT_FOCUS_YEAR },
+        uHalfSpan: { value: OBSERVATION_SPAN / 2 },
+        uFeather: { value: 9 },
+        uBend: { value: 0.075 },
+        uRiverWidth: { value: 6.5 },
+        uSelectedId: { value: -1 },
+        uHoveredId: { value: -1 },
+      },
+      vertexShader: `
+        attribute vec3 aTangent;
+        attribute float aSide;
+        attribute float aActiveCurve;
+        attribute vec4 aInfluence;
+        attribute float aCulture;
+        attribute vec3 aThemeColor;
+        attribute float aYear;
+        attribute float aLane;
+        attribute float aEntityId;
+
+        uniform vec4 uDimWeights;
+        uniform float uDimCulture;
+        uniform float uWidthScale;
+        uniform float uGeoSpread;
+        uniform float uFocusYear;
+        uniform float uHalfSpan;
+        uniform float uFeather;
+        uniform float uBend;
+        uniform float uRiverWidth;
+        uniform float uSelectedId;
+        uniform float uHoveredId;
+
+        varying vec3 vColor;
+        varying float vGlow;
+        varying float vAcross;
+        varying float vFade;
+        varying float vEmph;
+
+        void main() {
+          float infl = dot(uDimWeights, aInfluence) + uDimCulture * aCulture;
+          infl *= aActiveCurve;
+
+          // 远景收拢入河 / 近景散到真实地理位置
+          vec3 p = position;
+          float bend = sin(p.y * uBend) * 2.4;
+          vec2 riverXZ = vec2(bend + aLane * uRiverWidth, aLane * uRiverWidth * 0.25);
+          p.xz = mix(riverXZ, p.xz, uGeoSpread);
+
+          float isSel = 1.0 - step(0.5, abs(aEntityId - uSelectedId));
+          float isHov = 1.0 - step(0.5, abs(aEntityId - uHoveredId));
+          float hasSel = step(0.0, uSelectedId + 0.5);
+          float emph = mix(1.0, mix(0.35, 1.2, isSel), hasSel);
+          emph = max(emph, isHov * 0.9);
+          vEmph = emph;
+
+          float halfWidth = uWidthScale * (0.06 + infl * 0.34) * emph;
+
+          vec4 mv = modelViewMatrix * vec4(p, 1.0);
+          vec3 t = normalize((modelViewMatrix * vec4(aTangent, 0.0)).xyz + vec3(0.0, 0.0, 0.0001));
+          vec3 perp = normalize(vec3(t.y, -t.x, 0.0) + vec3(0.0001, 0.0, 0.0));
+          mv.xyz += aSide * halfWidth * perp;
+          gl_Position = projectionMatrix * mv;
+
+          vColor = aThemeColor;
+          vGlow = infl;
+          vAcross = aSide;
+          float d = abs(aYear - uFocusYear);
+          vFade = 1.0 - smoothstep(uHalfSpan, uHalfSpan + uFeather, d);
+          // 聚焦人物时，其完整一生（含窗口外延续）保持显影
+          vFade = max(vFade, isSel);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        varying float vGlow;
+        varying float vAcross;
+        varying float vFade;
+        varying float vEmph;
+
+        uniform float uOpacity;
+        uniform float uGlowScale;
+        uniform float uContextOpacity;
+
+        void main() {
+          float edge = 1.0 - abs(vAcross);
+          float glow = pow(edge, 2.0) * (0.4 + vGlow * uGlowScale);
+          vec3 color = vColor * (0.55 + glow);
+          float alpha = vFade * edge * uOpacity * vEmph;
+          alpha = max(alpha, edge * uContextOpacity * 0.14 * vEmph);
+          if (alpha <= 0.004) discard;
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
       transparent: true,
-      opacity: 0,
       depthWrite: false,
       blending: THREE.NormalBlending,
     });
-    const lifeEventMaterial = new THREE.LineBasicMaterial({
-      color: 0x79a5a3,
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      blending: THREE.NormalBlending,
+    const figureThreads = new THREE.Mesh(threadGeometry, threadMaterial);
+    figureThreads.renderOrder = 3;
+    figureThreads.frustumCulled = false;
+    riverGroup.add(figureThreads);
+
+    // --- 焦点年份节点：识别身份 / 拾取 / "此刻此人"锚点 -------------------------
+    const personColors = fixture.persons.map((person) => {
+      const [r, g, b] = themeColorFor(person, fixture.seed);
+      return new THREE.Color(r, g, b);
     });
-    const lifeContextLine = new THREE.LineSegments(
-      new THREE.BufferGeometry(),
-      lifeContextMaterial,
-    );
-    const lifeEventLine = new THREE.LineSegments(
-      new THREE.BufferGeometry(),
-      lifeEventMaterial,
-    );
-    lifeContextLine.renderOrder = 1;
-    lifeEventLine.renderOrder = 2;
-    riverGroup.add(lifeContextLine, lifeEventLine);
-
-    let lastLifeWindowFocus = Number.NaN;
-    const updateLifeWindowGeometry = (focus: number) => {
-      const nearestEvent = fixture.events.reduce((nearest, event) =>
-        Math.abs(event.year - focus) < Math.abs(nearest.year - focus)
-          ? event
-          : nearest,
-      );
-      const eventParticipants = new Set(nearestEvent.participantIds);
-      const contextSegments: number[] = [];
-      const eventSegments: number[] = [];
-      const halfSpan = OBSERVATION_SPAN / 2 + 3;
-      const stepYears = quality === "default" ? 1 : 2;
-
-      for (const person of fixture.persons) {
-        const startYear = Math.max(person.birthYear, Math.floor(focus - halfSpan));
-        const endYear = Math.min(person.deathYear, Math.ceil(focus + halfSpan));
-        if (startYear >= endYear) continue;
-
-        const target = eventParticipants.has(person.id)
-          ? eventSegments
-          : contextSegments;
-        let previous = personPositionAt(person, startYear, fixture);
-        for (
-          let year = startYear + stepYears;
-          year <= endYear;
-          year += stepYears
-        ) {
-          const current = personPositionAt(person, year, fixture);
-          target.push(
-            previous.x,
-            previous.y,
-            previous.z,
-            current.x,
-            current.y,
-            current.z,
-          );
-          previous = current;
-        }
-        if (previous.y !== historicalYearToY(endYear)) {
-          const current = personPositionAt(person, endYear, fixture);
-          target.push(
-            previous.x,
-            previous.y,
-            previous.z,
-            current.x,
-            current.y,
-            current.z,
-          );
-        }
-      }
-
-      lifeContextLine.geometry.dispose();
-      lifeContextLine.geometry = new THREE.BufferGeometry();
-      lifeContextLine.geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(contextSegments, 3),
-      );
-      lifeEventLine.geometry.dispose();
-      lifeEventLine.geometry = new THREE.BufferGeometry();
-      lifeEventLine.geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(eventSegments, 3),
-      );
-    };
-
-    const selectedGeometry = new THREE.BufferGeometry();
-    const selectedMaterial = new THREE.LineBasicMaterial({
-      color: 0xffd98a,
+    const nodeGeometry = new THREE.SphereGeometry(1, 12, 12);
+    const nodeMaterial = new THREE.MeshBasicMaterial({
       transparent: true,
-      opacity: 0.92,
+      opacity: 0.95,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
-    const selectedLifeLine = new THREE.Line(selectedGeometry, selectedMaterial);
-    riverGroup.add(selectedLifeLine);
-    let lastSelectedPath = "";
-
-    const personGeometry = new THREE.SphereGeometry(0.25, 14, 14);
-    const personMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.92,
-    });
-    const personMesh = new THREE.InstancedMesh(
-      personGeometry,
-      personMaterial,
+    const nodeMesh = new THREE.InstancedMesh(
+      nodeGeometry,
+      nodeMaterial,
       fixture.persons.length,
     );
-    personMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    personMesh.renderOrder = 4;
-    riverGroup.add(personMesh);
+    nodeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    nodeMesh.renderOrder = 4;
+    riverGroup.add(nodeMesh);
 
     const relationLines: THREE.Line[] = [];
     for (const relation of fixture.relations) {
@@ -619,34 +702,30 @@ export function HistoryRiver() {
     );
     riverGroup.add(windowMesh, windowEdges);
 
+    // --- 抽象中国地理方位图：海岸线 + 黄河 + 长江（俯视切片的方位参照）---------
     const geographyGroup = new THREE.Group();
-    const geographyCurves = [
-      [
-        [-12, 4], [-8, 3], [-4, 5], [0, 3], [4, 4], [8, 1], [12, 2],
-      ],
-      [
-        [-10, -5], [-6, -3], [-2, -4], [2, -2], [6, -4], [10, -3],
-      ],
-      [
-        [-7, 8], [-5, 5], [-3, 2], [-1, -1], [1, -5], [3, -8],
-      ],
-    ];
-    for (const coordinates of geographyCurves) {
-      const points = coordinates.map(
-        ([x, z]) => new THREE.Vector3(x, 0, z),
-      );
+    const addGeographyLine = (
+      coordinates: ReadonlyArray<readonly [number, number]>,
+      color: number,
+      baseOpacity: number,
+    ) => {
+      const points = coordinates.map(([x, z]) => new THREE.Vector3(x, 0, z));
       const curve = new THREE.CatmullRomCurve3(points);
       const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints(curve.getPoints(80)),
+        new THREE.BufferGeometry().setFromPoints(curve.getPoints(96)),
         new THREE.LineBasicMaterial({
-          color: 0x416f72,
+          color,
           transparent: true,
-          opacity: 0.18,
+          opacity: baseOpacity,
           depthWrite: false,
         }),
       );
+      line.userData.baseOpacity = baseOpacity;
       geographyGroup.add(line);
-    }
+    };
+    addGeographyLine(abstractChina.coastline, 0x5c8f93, 1); // 海岸线
+    addGeographyLine(abstractChina.rivers.yellow, 0xc7a86a, 1); // 黄河（暖）
+    addGeographyLine(abstractChina.rivers.yangtze, 0x6fb3c4, 1); // 长江（冷）
     riverGroup.add(geographyGroup);
 
     const sourceGlow = new THREE.Mesh(
@@ -667,6 +746,9 @@ export function HistoryRiver() {
     const tempMatrix = new THREE.Matrix4();
     const tempQuaternion = new THREE.Quaternion();
     const tempScale = new THREE.Vector3();
+    const tempColor = new THREE.Color();
+    const selectedColor = new THREE.Color(0xffdc8a);
+    const hoveredColor = new THREE.Color(0xffffff);
     const frameSamples: number[] = [];
     let previousFrame = performance.now();
     let lastStatsAt = previousFrame;
@@ -694,7 +776,9 @@ export function HistoryRiver() {
     const onPointerMove = (event: PointerEvent) => {
       updatePointer(event);
       raycaster.setFromCamera(pointer, camera);
-      const hit = raycaster.intersectObject(personMesh, false)[0];
+      const hit = nodeMesh.visible
+        ? raycaster.intersectObject(nodeMesh, false)[0]
+        : undefined;
       const nextId =
         hit?.instanceId === undefined ? null : fixture.persons[hit.instanceId]?.id;
       if (nextId !== lastHoverId) {
@@ -708,10 +792,12 @@ export function HistoryRiver() {
     const onClick = (event: PointerEvent) => {
       updatePointer(event);
       raycaster.setFromCamera(pointer, camera);
-      const personHit = raycaster.intersectObject(personMesh, false)[0];
-      if (personHit?.instanceId !== undefined) {
-        selectPerson(fixture.persons[personHit.instanceId].id);
-        return;
+      if (nodeMesh.visible) {
+        const personHit = raycaster.intersectObject(nodeMesh, false)[0];
+        if (personHit?.instanceId !== undefined) {
+          selectPerson(fixture.persons[personHit.instanceId].id);
+          return;
+        }
       }
       const relationHit = raycaster.intersectObjects(relationLines, false)[0];
       const relationId = relationHit?.object.userData.relationId as string | undefined;
@@ -837,76 +923,71 @@ export function HistoryRiver() {
         currentView === "relation-focus";
       geographyGroup.visible = showGeography;
       const geographyOpacity =
-        currentView === "slice" ? 0.18 : currentView === "person-focus" ? 0.1 : 0.055;
+        currentView === "slice" ? 0.32 : currentView === "person-focus" ? 0.18 : 0.1;
       for (const child of geographyGroup.children) {
         ((child as THREE.Line).material as THREE.LineBasicMaterial).opacity =
           geographyOpacity;
       }
 
-      if (focus !== lastLifeWindowFocus) {
-        lastLifeWindowFocus = focus;
-        updateLifeWindowGeometry(focus);
-      }
-      lifeContextMaterial.opacity =
-        currentView === "entering-window"
-          ? 0.015
-          : currentView === "slice"
-            ? 0.028
-            : currentView === "person-focus"
-              ? 0.006
-              : 0;
-      lifeEventMaterial.opacity =
-        currentView === "entering-window"
-          ? 0.07
-          : currentView === "slice"
-            ? 0.12
-            : currentView === "person-focus"
-              ? 0.018
-              : currentView === "relation-focus"
-                ? 0.01
-                : 0;
+      // 丝线 uniform：维度权重、汇流程度与显影参数平滑插值
+      const lerpK = lowMotionRef.current ? 0.05 : 0.1;
+      const uniforms = threadMaterial.uniforms;
+      const dimTarget = dimensionTargets[dimensionRef.current];
+      (uniforms.uDimWeights.value as THREE.Vector4).lerp(
+        new THREE.Vector4(...dimTarget.vec),
+        lerpK,
+      );
+      uniforms.uDimCulture.value +=
+        (dimTarget.culture - uniforms.uDimCulture.value) * lerpK;
+      const style = threadStateStyle[currentView];
+      uniforms.uWidthScale.value += (style.width - uniforms.uWidthScale.value) * lerpK;
+      uniforms.uGlowScale.value += (style.glow - uniforms.uGlowScale.value) * lerpK;
+      uniforms.uOpacity.value += (style.opacity - uniforms.uOpacity.value) * lerpK;
+      uniforms.uContextOpacity.value +=
+        (style.context - uniforms.uContextOpacity.value) * lerpK;
+      uniforms.uGeoSpread.value += (style.geoSpread - uniforms.uGeoSpread.value) * lerpK;
+      uniforms.uFocusYear.value = focus;
+      const selectedIndex = fixture.persons.findIndex(
+        (person) => person.id === selectedPersonRef.current,
+      );
+      const hoveredIndex = fixture.persons.findIndex(
+        (person) => person.id === hoveredPersonRef.current,
+      );
+      uniforms.uSelectedId.value = currentView === "person-focus" ? selectedIndex : -1;
+      uniforms.uHoveredId.value = hoveredIndex;
 
-      for (let index = 0; index < fixture.persons.length; index += 1) {
-        const person = fixture.persons[index];
-        const point = personPositionAt(person, focus, fixture);
-        const strength = influenceAt(person, focus, dimensionRef.current);
-        const alive = strength > 0;
-        const isSelected = person.id === selectedPersonRef.current;
-        const isHovered = person.id === hoveredPersonRef.current;
-        const pulse = lowMotionRef.current ? 1 : 1 + Math.sin(now * 0.002 + index) * 0.06;
-        const size = alive ? (0.36 + strength * 0.82) * pulse : 0.001;
-        tempScale.setScalar(size * (isSelected ? 1.3 : 1));
-        tempMatrix.compose(
-          new THREE.Vector3(point.x, point.y, point.z),
-          tempQuaternion,
-          tempScale,
-        );
-        personMesh.setMatrixAt(index, tempMatrix);
-        const color = isSelected
-          ? new THREE.Color(0xffdc8a)
-          : isHovered
-            ? new THREE.Color(0xffffff)
-            : new THREE.Color(0x8ed4cf).lerp(
-                new THREE.Color(0xd8b66e),
-                strength,
-              );
-        personMesh.setColorAt(index, color);
+      // 焦点年份节点
+      const showNodes = currentView !== "river-overview";
+      nodeMesh.visible = showNodes;
+      if (showNodes) {
+        for (let index = 0; index < fixture.persons.length; index += 1) {
+          const person = fixture.persons[index];
+          const point = personPositionAt(person, focus, fixture);
+          const strength = influenceAt(person, focus, dimensionRef.current);
+          const alive = strength > 0;
+          const isSelected = person.id === selectedPersonRef.current;
+          const isHovered = person.id === hoveredPersonRef.current;
+          const pulse = lowMotionRef.current
+            ? 1
+            : 1 + Math.sin(now * 0.002 + index) * 0.06;
+          const size = alive
+            ? (0.12 + strength * 0.34) * pulse * (isSelected ? 1.5 : 1)
+            : 0.0001;
+          tempScale.setScalar(size);
+          tempMatrix.compose(
+            new THREE.Vector3(point.x, point.y, point.z),
+            tempQuaternion,
+            tempScale,
+          );
+          nodeMesh.setMatrixAt(index, tempMatrix);
+          if (isSelected) tempColor.copy(selectedColor);
+          else if (isHovered) tempColor.copy(hoveredColor);
+          else tempColor.copy(personColors[index]).multiplyScalar(1.25);
+          nodeMesh.setColorAt(index, tempColor);
+        }
+        nodeMesh.instanceMatrix.needsUpdate = true;
+        if (nodeMesh.instanceColor) nodeMesh.instanceColor.needsUpdate = true;
       }
-      personMesh.instanceMatrix.needsUpdate = true;
-      if (personMesh.instanceColor) personMesh.instanceColor.needsUpdate = true;
-
-      if (selectedPersonRef.current !== lastSelectedPath) {
-        lastSelectedPath = selectedPersonRef.current;
-        const person = fixture.persons.find(
-          (candidate) => candidate.id === lastSelectedPath,
-        ) ?? fixture.persons[0];
-        const points = createLifePath(person, fixture, 1).map(
-          (point) => new THREE.Vector3(point.x, point.y, point.z),
-        );
-        selectedLifeLine.geometry.dispose();
-        selectedLifeLine.geometry = new THREE.BufferGeometry().setFromPoints(points);
-      }
-      selectedLifeLine.visible = viewRef.current === "person-focus";
 
       for (const line of relationLines) {
         const material = line.material as THREE.LineBasicMaterial;
@@ -1208,8 +1289,8 @@ export function HistoryRiver() {
       </div>
 
       <div className="visual-legend" aria-label="视觉图例">
-        <span><i className="person-dot" />人物光点</span>
-        <span><i className="life-thread" />人生悬丝</span>
+        <span><i className="person-thread" />人物丝线 · 粗细/辉光=影响力</span>
+        <span><i className="focus-node" />焦点年份节点</span>
         <span><i className="thought-thread" />思想丝线</span>
         <span><i className="event-cloud" />事件聚集</span>
       </div>
