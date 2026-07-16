@@ -509,23 +509,23 @@ notes / visible artifacts:
 
 - 一键重置到 S0；
 - 一键运行 75 秒默认导览；
-- 直接跳转 S0–S4，但测试参与者默认不可见；
+- 直接跳转 S0–S4，但该调试入口默认不可见；
 - 固定模拟数据与种子；
 - 可切换正常/低动态、声音开/关、默认/降级质量；
 - 可导出或复制当前状态与性能摘要。
 
-具体参与者任务与通过阈值见 [设计文档第 20 节](./design.md#20-p0-设计验证协议)。
+具体开发者自验项与通过条件见 [设计文档第 20 节](./design.md#20-p0-开发者自验协议)。
 
 ## 13. 需求—实现—验证追踪
 
 | 需求 | 技术责任 | 验证证据 |
 | --- | --- | --- |
-| D-01 三视角同源 | 单一 History Store、Scene Projection、Camera Anchor | 对象 ID/坐标调试 + 三状态截图 + 用户识别 V-01 |
-| D-02 窗口不截断人生 | ObservationWindow、窗口外 LOD、LifeSample 插值 | 数据不变量 + V-02/V-05 |
-| D-03 事件表现聚散 | CuratedEvent、事件轨迹约束、可回放逻辑时钟 | 事件前中后截图/录屏 + V-03 |
-| D-04 两类线可区分 | 独立缓冲与材质、关系类型参数 | 视觉基准 + V-04/V-07 |
-| D-05 导览可接管 | Experience State Machine、CameraAuthority、returnAnchor | 状态机测试 + V-06 |
-| D-06 时代色从河内显现 | EraStyleProfile 连续插值、统一材质参数 | 边界连续性截图 + 体验量表 |
+| D-01 三视角同源 | 单一 History Store、Scene Projection、Camera Anchor | 对象 ID/坐标调试 + 三状态截图 + C-01 |
+| D-02 窗口不截断人生 | ObservationWindow、窗口外 LOD、LifeSample 插值 | 数据不变量 + C-02/C-05 |
+| D-03 事件表现聚散 | CuratedEvent、事件轨迹约束、可回放逻辑时钟 | 事件前中后截图/录屏 + C-03 |
+| D-04 两类线可区分 | 独立缓冲与材质、关系类型参数 | 视觉基准 + C-04/C-07 |
+| D-05 导览可接管 | Experience State Machine、CameraAuthority、returnAnchor | 状态机测试 + C-06 |
+| D-06 时代色从河内显现 | EraStyleProfile 连续插值、统一材质参数 | 边界连续性与状态对比截图 |
 | T-01 三视角同源 | 单数据源、统一投影函数 | ID 与坐标自动测试 |
 | T-02 桌面交互稳定 | 批处理、LOD、指标采集 | 第 10 节性能记录 |
 | T-03 可降级 | QualityPolicy 与语义保护名单 | 正常/降级对比和设计复核 |
@@ -563,7 +563,7 @@ notes / visible artifacts:
 5. 先完成 S0–S2 的最短垂直切片，再扩展人物和思想关系；
 6. 每完成一个 Task 将结果、验证和阻塞追加到 `work-log.md`。
 
-以上条件均已满足，`M1-01-T03` 于 2026-07-16 完成。单设备性能与交互结果记录在 [当前迭代验证记录](./iterations/current/validation.md)，尚未完成的规模夹具、集成显卡和真实用户观察仍属于 T04，不得视为长期性能结论。
+以上条件均已满足，`M1-01-T03` 于 2026-07-16 完成。单设备性能与交互结果记录在 [当前迭代验证记录](./iterations/current/validation.md)；尚未完成的规模夹具、集成显卡和开发者自验复测仍属于 T04，不得视为长期性能结论。
 
 ## 16. 技术参考
 
