@@ -28,9 +28,10 @@ export interface HistoryPostProcessing {
 }
 
 const WATERFALL_CENTER_X = 6;
-const CELESTIAL = new THREE.Color(0xa9c5dc);
-const IVORY = new THREE.Color(0xf3ebdd);
-const MEMORY_GOLD = new THREE.Color(0xe7cca0);
+const CONFLUENCE_CENTER_Z = 4;
+const CELESTIAL = new THREE.Color(0x9ebbd5);
+const IVORY = new THREE.Color(0xffdda8);
+const MEMORY_GOLD = new THREE.Color(0xe99b38);
 
 // 人民光海：一片无边无际、由无数短丝线铺满的三维光海——不渲染任何水体面片。
 // 单根丝线很短（约 10–30 单位，象征一段人生片段）；多根短丝线错落汇聚、首尾续接，
@@ -78,6 +79,15 @@ const OCEAN_WAVES: OceanWave[] = (
   return { ...w, dir: [w.dir[0] / len, w.dir[1] / len] as const };
 });
 
+const CONFLUENCE_RIPPLE = {
+  wavelength: 48,
+  amp: 3.4,
+  steep: 0.62,
+  speed: 1.46,
+  near: 8,
+  far: 210,
+} as const;
+
 const OCEAN_HEIGHT_GLSL = `
   // 单个 Gerstner 波，返回三维位移 (dx, dy, dz)。dir 需已归一化。
   vec3 gerstnerWave(vec2 q, vec2 dir, float wavelength, float amp, float steep, float w) {
@@ -96,6 +106,20 @@ ${OCEAN_WAVES.map(
   (w) =>
     `    d += gerstnerWave(q, vec2(${w.dir[0].toFixed(5)}, ${w.dir[1].toFixed(5)}), ${w.wavelength.toFixed(1)}, ${w.amp.toFixed(2)}, ${w.steep.toFixed(2)}, ${w.speed.toFixed(2)});`,
 ).join("\n")}
+    // 河流落点生成一组径向余波，让纵向河束与横向光海共享同一个运动源。
+    vec2 impactOffset = q - vec2(${WATERFALL_CENTER_X.toFixed(1)}, ${CONFLUENCE_CENTER_Z.toFixed(1)});
+    float impactDistance = length(impactOffset);
+    vec2 impactDir = impactOffset / max(impactDistance, 0.001);
+    float impactEnvelope = smoothstep(${CONFLUENCE_RIPPLE.near.toFixed(1)}, ${(CONFLUENCE_RIPPLE.near + 10).toFixed(1)}, impactDistance)
+      * (1.0 - smoothstep(${(CONFLUENCE_RIPPLE.far - 55).toFixed(1)}, ${CONFLUENCE_RIPPLE.far.toFixed(1)}, impactDistance));
+    float impactK = 6.2831853 / ${CONFLUENCE_RIPPLE.wavelength.toFixed(1)};
+    float impactT = uTime * 0.00035 * uFlow;
+    float impactPhase = impactK * impactDistance - ${CONFLUENCE_RIPPLE.speed.toFixed(2)} * impactT;
+    d += vec3(
+      impactDir.x * ${CONFLUENCE_RIPPLE.steep.toFixed(2)} * ${CONFLUENCE_RIPPLE.amp.toFixed(2)} * cos(impactPhase),
+      ${CONFLUENCE_RIPPLE.amp.toFixed(2)} * sin(impactPhase),
+      impactDir.y * ${CONFLUENCE_RIPPLE.steep.toFixed(2)} * ${CONFLUENCE_RIPPLE.amp.toFixed(2)} * cos(impactPhase)
+    ) * impactEnvelope;
     return d * uAmp;
   }
 
@@ -109,6 +133,22 @@ function oceanHeightStatic(x: number, z: number): number {
     const k = (2 * Math.PI) / w.wavelength;
     h += w.amp * Math.sin(k * (w.dir[0] * x + w.dir[1] * z));
   }
+  const impactDistance = Math.hypot(
+    x - WATERFALL_CENTER_X,
+    z - CONFLUENCE_CENTER_Z,
+  );
+  const impactEnvelope = smoothstep(
+    CONFLUENCE_RIPPLE.near,
+    CONFLUENCE_RIPPLE.near + 10,
+    impactDistance,
+  ) * (1 - smoothstep(
+    CONFLUENCE_RIPPLE.far - 55,
+    CONFLUENCE_RIPPLE.far,
+    impactDistance,
+  ));
+  h += CONFLUENCE_RIPPLE.amp * Math.sin(
+    (2 * Math.PI * impactDistance) / CONFLUENCE_RIPPLE.wavelength,
+  ) * impactEnvelope;
   return h;
 }
 
@@ -233,9 +273,9 @@ function createRadialTexture(): THREE.DataTexture {
 }
 
 function waterfallColor(t: number, brightness = 1): THREE.Color {
-  const color = t < 0.58
-    ? CELESTIAL.clone().lerp(IVORY, smoothstep(0.12, 0.58, t))
-    : IVORY.clone().lerp(MEMORY_GOLD, smoothstep(0.58, 1, t));
+  const color = t < 0.5
+    ? CELESTIAL.clone().lerp(IVORY, smoothstep(0.04, 0.5, t))
+    : IVORY.clone().lerp(MEMORY_GOLD, smoothstep(0.5, 0.94, t));
   return color.multiplyScalar(brightness);
 }
 
@@ -245,27 +285,32 @@ function waterfallPoint(
   phase: number,
   topY: number,
 ): THREE.Vector3 {
-  const centralBend = Math.sin(t * Math.PI * 1.55 + 0.32) * 2.25;
-  const lowerFlare = smoothstep(0.76, 1, t);
-  const width =
-    6.2 +
-    Math.pow(Math.sin(t * Math.PI), 1.12) * 18 +
-    Math.pow(t, 4) * 15;
+  const shoulder = Math.pow(Math.sin(t * Math.PI), 1.18);
+  const landingTaper = 1 - smoothstep(0.63, 1, t);
+  const centralBend =
+    Math.sin(t * Math.PI * 1.72 + 0.42) * (2.4 + shoulder * 2.3) +
+    Math.sin(t * Math.PI * 3.4 + 1.1) * shoulder * 0.85;
+  const width = 2.6 + (5.6 + shoulder * 6.8) * landingTaper;
   const strandWander =
-    Math.sin(t * (7.2 + phase * 3.4) + phase * 11) * (0.5 + t * 1.65);
+    Math.sin(t * (7.2 + phase * 3.4) + phase * 11) *
+    (0.42 + shoulder * 1.45) *
+    (1 - smoothstep(0.78, 1, t) * 0.72);
   const bundleDrift =
     Math.sin(t * Math.PI * (1.1 + phase * 0.55) + phase * Math.PI * 2) *
     Math.sin(t * Math.PI) *
-    (0.45 + Math.abs(lane) * 2.2);
+    (0.55 + Math.abs(lane) * 2.35);
+  const centerZ = THREE.MathUtils.lerp(-8, CONFLUENCE_CENTER_Z, Math.pow(t, 1.16));
+  const depthWidth = (2.2 + shoulder * 4.4) * (0.42 + landingTaper * 0.58);
   return new THREE.Vector3(
     WATERFALL_CENTER_X +
       centralBend +
       lane * width +
-      lane * lowerFlare * 8 +
       strandWander +
       bundleDrift,
-    topY * (1 - t) - Math.pow(t, 7) * 1.2,
-    lane * (1.2 + t * 3.5) + Math.sin(t * 9 + phase * 7) * (0.18 + t * 0.46),
+    THREE.MathUtils.lerp(topY, SEA_BASE_Y + 0.25, t),
+    centerZ +
+      lane * depthWidth +
+      Math.sin(t * 9 + phase * 7) * (0.16 + shoulder * 0.5),
   );
 }
 
@@ -274,8 +319,8 @@ function createWaterfallFibers(
   topY: number,
   quality: SceneQuality,
 ): { object: THREE.LineSegments; material: THREE.LineBasicMaterial } {
-  const strandCount = quality === "default" ? 280 : 130;
-  const segmentCount = quality === "default" ? 104 : 64;
+  const strandCount = quality === "default" ? 112 : 58;
+  const segmentCount = quality === "default" ? 112 : 68;
   const positions: number[] = [];
   const colors: number[] = [];
   const color = new THREE.Color();
@@ -289,9 +334,9 @@ function createWaterfallFibers(
       1,
     );
     const phase = random();
-    const strandBrightness = random() < 0.14
-      ? 0.72 + random() * 0.5
-      : 0.2 + random() * 0.42;
+    const strandBrightness = random() < 0.13
+      ? 0.68 + random() * 0.34
+      : 0.22 + random() * 0.36;
     const startT = random() * 0.045;
     const endT = 0.965 + random() * 0.035;
 
@@ -314,7 +359,7 @@ function createWaterfallFibers(
   const material = new THREE.LineBasicMaterial({
     vertexColors: true,
     transparent: true,
-    opacity: 0.22,
+    opacity: 0.18,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
@@ -329,7 +374,7 @@ function createWaterfallParticles(
   topY: number,
   quality: SceneQuality,
 ): { object: THREE.Points; material: THREE.ShaderMaterial } {
-  const count = quality === "default" ? 22000 : 8000;
+  const count = quality === "default" ? 7600 : 3200;
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
   const seeds = new Float32Array(count);
@@ -337,10 +382,13 @@ function createWaterfallParticles(
 
   for (let index = 0; index < count; index += 1) {
     const t = Math.pow(random(), 0.92);
-    const lane = (random() + random() + random() - 1.5) / 1.5;
+    const coreLane = (random() + random() + random() - 1.5) / 1.5;
+    const lane = random() < 0.1
+      ? THREE.MathUtils.clamp(coreLane * 1.45 + (random() - 0.5) * 0.32, -1, 1)
+      : coreLane * 0.82;
     const phase = random();
     const point = waterfallPoint(lane, t, phase, topY);
-    const radialJitter = 0.32 + Math.pow(t, 1.7) * 0.8;
+    const radialJitter = 0.24 + Math.sin(t * Math.PI) * 0.64;
     positions[index * 3] = point.x + (random() - 0.5) * radialJitter;
     positions[index * 3 + 1] = point.y + (random() - 0.5) * 0.42;
     positions[index * 3 + 2] = point.z + (random() - 0.5) * radialJitter;
@@ -360,8 +408,8 @@ function createWaterfallParticles(
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
-      uSize: { value: quality === "default" ? 1.35 : 1.55 },
-      uOpacity: { value: 0.58 },
+      uSize: { value: quality === "default" ? 1.18 : 1.42 },
+      uOpacity: { value: 0.18 },
       uFlow: { value: 1 },
     },
     vertexShader: `
@@ -403,6 +451,145 @@ function createWaterfallParticles(
     blending: THREE.AdditiveBlending,
   });
   const object = new THREE.Points(geometry, material);
+  object.renderOrder = 3;
+  object.frustumCulled = false;
+  return { object, material };
+}
+
+function createConfluenceFlows(
+  random: () => number,
+  quality: SceneQuality,
+): { object: THREE.LineSegments; material: THREE.ShaderMaterial } {
+  const flowCount = quality === "default" ? 310 : 150;
+  const positions: number[] = [];
+  const progresses: number[] = [];
+  const brights: number[] = [];
+
+  for (let flow = 0; flow < flowCount; flow += 1) {
+    // 多数流线朝镜头方向展开，少数绕向两侧和远方，使落点既有主流向也有完整余波。
+    const angle = random() < 0.68
+      ? Math.PI / 2 + (random() - 0.5) * 2.35
+      : random() * Math.PI * 2;
+    const phase = random() * Math.PI * 2;
+    const startRadius = 3 + Math.pow(random(), 1.5) * 11;
+    const length = 38 + Math.pow(random(), 0.72) * 172;
+    const bend = (random() - 0.5) * (0.28 + random() * 0.52);
+    const meander = 0.7 + random() * 2.8;
+    const meanderFrequency = 1.5 + random() * 0.4;
+    const steps = quality === "default"
+      ? 34 + Math.floor(random() * 24)
+      : 22 + Math.floor(random() * 16);
+    const brightness = 0.42 + random() * 0.66 + (random() < 0.12 ? 0.54 : 0);
+
+    let previousX = WATERFALL_CENTER_X + Math.cos(angle) * startRadius;
+    let previousZ = CONFLUENCE_CENTER_Z + Math.sin(angle) * startRadius;
+    let previousProgress = 0;
+
+    for (let step = 1; step <= steps; step += 1) {
+      const progress = step / steps;
+      const radius = startRadius + length * Math.pow(progress, 0.9);
+      const theta =
+        angle +
+        bend * smoothstep(0.08, 1, progress) +
+        Math.sin(progress * Math.PI * meanderFrequency + phase) * 0.025;
+      const sideways = Math.sin(progress * Math.PI * 4.2 + phase) * meander;
+      const x =
+        WATERFALL_CENTER_X +
+        Math.cos(theta) * radius +
+        Math.sin(theta) * sideways;
+      const z =
+        CONFLUENCE_CENTER_Z +
+        Math.sin(theta) * radius -
+        Math.cos(theta) * sideways;
+      positions.push(
+        previousX,
+        SEA_BASE_Y + 0.32,
+        previousZ,
+        x,
+        SEA_BASE_Y + 0.32,
+        z,
+      );
+      progresses.push(previousProgress, progress);
+      brights.push(brightness, brightness);
+      previousX = x;
+      previousZ = z;
+      previousProgress = progress;
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("aProgress", new THREE.Float32BufferAttribute(progresses, 1));
+  geometry.setAttribute("aBright", new THREE.Float32BufferAttribute(brights, 1));
+
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uFlow: { value: 1 },
+      uAmp: { value: 1 },
+      uOpacity: { value: 0.15 },
+      uCore: { value: new THREE.Color(0xffdca2) },
+      uFlowColor: { value: new THREE.Color(0xd99738) },
+      uCrest: { value: new THREE.Color(0xfffaea) },
+      uFade: { value: new THREE.Vector2(SEA_FADE_NEAR, SEA_FADE_FAR) },
+    },
+    vertexShader: `
+      attribute float aProgress;
+      attribute float aBright;
+
+      uniform float uTime;
+      uniform float uFlow;
+      uniform float uAmp;
+      uniform float uOpacity;
+      uniform vec3 uCore;
+      uniform vec3 uFlowColor;
+      uniform vec3 uCrest;
+      uniform vec2 uFade;
+
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      ${OCEAN_HEIGHT_GLSL}
+
+      void main() {
+        vec3 p = position;
+        vec3 disp = oceanDisplace(p.xz);
+        p += disp;
+
+        float crest = smoothstep(5.0, 17.0, disp.y);
+        float contactLight = 1.0 - smoothstep(0.02, 0.34, aProgress);
+        vec3 base = mix(uCore, uFlowColor, smoothstep(0.04, 0.86, aProgress));
+        vColor = mix(base, uCrest, crest * 0.56 + contactLight * 0.12)
+          * (0.44 + aBright * 0.5);
+
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, -mv.z);
+        float entryFade = smoothstep(0.0, 0.13, aProgress);
+        float reachFade = 1.0 - smoothstep(0.68, 1.0, aProgress);
+        vAlpha = uOpacity
+          * horizonFade
+          * entryFade
+          * (0.2 + reachFade * 0.8)
+          * (0.62 + contactLight * 0.56)
+          * min(aBright, 1.35);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        if (vAlpha <= 0.003) discard;
+        gl_FragColor = vec4(vColor, vAlpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+
+  const object = new THREE.LineSegments(geometry, material);
   object.renderOrder = 3;
   object.frustumCulled = false;
   return { object, material };
@@ -845,8 +1032,9 @@ export function createHistoryVisuals(options: {
   root.add(clouds.group);
 
   const flowingOcean = createFlowingOcean(random, quality);
+  const confluenceFlows = createConfluenceFlows(random, quality);
   const seaFoam = createSeaFoam(random, quality);
-  root.add(flowingOcean.object, seaFoam.object);
+  root.add(flowingOcean.object, confluenceFlows.object, seaFoam.object);
 
   const waterfallFibers = createWaterfallFibers(random, topY, quality);
   const waterfallParticles = createWaterfallParticles(random, topY, quality);
@@ -861,24 +1049,24 @@ export function createHistoryVisuals(options: {
   );
   const confluenceGlow = createGlowSprite(
     radialTexture,
-    0xf3e4c9,
-    0.38,
-    new THREE.Vector3(WATERFALL_CENTER_X + 1, 0.8, 1),
-    new THREE.Vector2(84, 24),
+    0xffd890,
+    0.3,
+    new THREE.Vector3(WATERFALL_CENTER_X, 2.4, CONFLUENCE_CENTER_Z),
+    new THREE.Vector2(96, 25),
   );
   const confluenceCore = createGlowSprite(
     radialTexture,
     0xfff4df,
     0.34,
-    new THREE.Vector3(WATERFALL_CENTER_X + 1, 1.2, 4),
-    new THREE.Vector2(30, 11),
+    new THREE.Vector3(WATERFALL_CENTER_X, 1.6, CONFLUENCE_CENTER_Z + 1),
+    new THREE.Vector2(34, 10),
   );
   const horizonMist = createGlowSprite(
     cloudTexture,
-    0xc8a55e,
-    0.085,
-    new THREE.Vector3(WATERFALL_CENTER_X - 4, 6, 12),
-    new THREE.Vector2(178, 42),
+    0xd9b76e,
+    0.11,
+    new THREE.Vector3(WATERFALL_CENTER_X - 4, 7, CONFLUENCE_CENTER_Z + 5),
+    new THREE.Vector2(186, 38),
   );
   const seaMist = createGlowSprite(
     cloudTexture,
@@ -887,28 +1075,12 @@ export function createHistoryVisuals(options: {
     new THREE.Vector3(WATERFALL_CENTER_X + 6, 4, 58),
     new THREE.Vector2(236, 46),
   );
-  const upperVeil = createGlowSprite(
-    cloudTexture,
-    0x90aec5,
-    0.16,
-    new THREE.Vector3(WATERFALL_CENTER_X + 1, topY * 0.7, -4),
-    new THREE.Vector2(54, 78),
-  );
-  const lowerVeil = createGlowSprite(
-    cloudTexture,
-    0xd9d7cf,
-    0.12,
-    new THREE.Vector3(WATERFALL_CENTER_X + 2, topY * 0.34, -2),
-    new THREE.Vector2(68, 72),
-  );
   root.add(
     sourceGlow,
     confluenceGlow,
     confluenceCore,
     horizonMist,
     seaMist,
-    upperVeil,
-    lowerVeil,
   );
 
   const viewOpacity: Record<ExperienceState, number> = {
@@ -925,8 +1097,8 @@ export function createHistoryVisuals(options: {
       const visibility = viewOpacity[view];
       waterfallParticles.material.uniforms.uTime.value = lowMotion ? 0 : now;
       waterfallParticles.material.uniforms.uFlow.value = lowMotion ? 0 : 1;
-      waterfallParticles.material.uniforms.uOpacity.value = 0.68 * visibility;
-      waterfallFibers.material.opacity = 0.085 * visibility;
+      waterfallParticles.material.uniforms.uOpacity.value = 0.4 * visibility;
+      waterfallFibers.material.opacity = 0.36 * visibility;
 
       // 编织海面与浪花：uTime 驱动波浪仿真，低动态偏好时冻结起伏但保留静态海面。
       const oceanFlow = lowMotion ? 0 : 1;
@@ -935,6 +1107,10 @@ export function createHistoryVisuals(options: {
       flowingOcean.material.uniforms.uFlow.value = oceanFlow;
       flowingOcean.material.uniforms.uAmp.value = oceanAmp;
       flowingOcean.material.uniforms.uOpacity.value = 0.36 * visibility;
+      confluenceFlows.material.uniforms.uTime.value = now;
+      confluenceFlows.material.uniforms.uFlow.value = oceanFlow;
+      confluenceFlows.material.uniforms.uAmp.value = oceanAmp;
+      confluenceFlows.material.uniforms.uOpacity.value = 0.15 * visibility;
       seaFoam.material.uniforms.uTime.value = now;
       seaFoam.material.uniforms.uFlow.value = oceanFlow;
       seaFoam.material.uniforms.uAmp.value = oceanAmp;
@@ -942,22 +1118,20 @@ export function createHistoryVisuals(options: {
 
       const breath = lowMotion ? 1 : 1 + Math.sin(now * 0.00045) * 0.045;
       sourceGlow.scale.set(42 * breath, 48 * breath, 1);
-      confluenceGlow.scale.set(58 * breath, 18 * breath, 1);
-      confluenceCore.scale.set(22 * breath, 9 * breath, 1);
-      (sourceGlow.material as THREE.SpriteMaterial).opacity = 0.28 * visibility;
-      (confluenceGlow.material as THREE.SpriteMaterial).opacity = 0.22 * visibility;
-      (confluenceCore.material as THREE.SpriteMaterial).opacity = 0.2 * visibility;
-      (horizonMist.material as THREE.SpriteMaterial).opacity = 0.2 * visibility;
-      (seaMist.material as THREE.SpriteMaterial).opacity = 0.22 * visibility;
-      (upperVeil.material as THREE.SpriteMaterial).opacity = 0.16 * visibility;
-      (lowerVeil.material as THREE.SpriteMaterial).opacity = 0.12 * visibility;
+      confluenceGlow.scale.set(92 * breath, 23 * breath, 1);
+      confluenceCore.scale.set(32 * breath, 10 * breath, 1);
+      (sourceGlow.material as THREE.SpriteMaterial).opacity = 0.22 * visibility;
+      (confluenceGlow.material as THREE.SpriteMaterial).opacity = 0.13 * visibility;
+      (confluenceCore.material as THREE.SpriteMaterial).opacity = 0.16 * visibility;
+      (horizonMist.material as THREE.SpriteMaterial).opacity = 0.08 * visibility;
+      (seaMist.material as THREE.SpriteMaterial).opacity = 0.065 * visibility;
 
       for (const state of clouds.states) {
         const motion = lowMotion ? 0 : Math.sin(now * 0.000035 + state.phase);
         state.sprite.position.x = state.basePosition.x + motion * 1.8;
         state.sprite.position.y = state.basePosition.y + motion * 0.42;
         (state.sprite.material as THREE.SpriteMaterial).opacity =
-          state.baseOpacity * (0.88 + motion * 0.12) * Math.max(0.52, visibility);
+          state.baseOpacity * (0.88 + motion * 0.12) * Math.max(0.28, visibility * 0.42);
       }
     },
     dispose() {

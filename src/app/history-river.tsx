@@ -595,9 +595,18 @@ export function HistoryRiver() {
       const focusY = historicalYearToY(focusYearRef.current);
       const currentView = viewRef.current;
       if (currentView === "river-overview") {
+        const portraitMix = 1 - THREE.MathUtils.smoothstep(camera.aspect, 0.72, 1.15);
         return {
-          position: new THREE.Vector3(50, 34, 218),
-          target: new THREE.Vector3(-28, 30, 0),
+          position: new THREE.Vector3(
+            THREE.MathUtils.lerp(50, 42, portraitMix),
+            34,
+            THREE.MathUtils.lerp(218, 232, portraitMix),
+          ),
+          target: new THREE.Vector3(
+            THREE.MathUtils.lerp(-28, 4, portraitMix),
+            30,
+            0,
+          ),
           up: new THREE.Vector3(0, 1, 0),
         };
       }

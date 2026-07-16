@@ -19,16 +19,16 @@ export interface HistoryGeographyRig {
 }
 
 const volumeOpacity: Record<ExperienceState, number> = {
-  "river-overview": 0.018,
-  "entering-window": 0.014,
+  "river-overview": 0.0028,
+  "entering-window": 0.007,
   slice: 0.0045,
   "person-focus": 0.003,
   "relation-focus": 0.0025,
 };
 
 const longitudinalOpacity: Record<ExperienceState, number> = {
-  "river-overview": 0.052,
-  "entering-window": 0.034,
+  "river-overview": 0.038,
+  "entering-window": 0.03,
   slice: 0.008,
   "person-focus": 0.005,
   "relation-focus": 0.004,
