@@ -279,38 +279,60 @@ function waterfallColor(t: number, brightness = 1): THREE.Color {
   return color.multiplyScalar(brightness);
 }
 
+interface WaterfallStrandProfile {
+  angle: number;
+  radius: number;
+  phase: number;
+  skew: number;
+}
+
 function waterfallPoint(
-  lane: number,
+  profile: WaterfallStrandProfile,
   t: number,
-  phase: number,
   topY: number,
 ): THREE.Vector3 {
-  const shoulder = Math.pow(Math.sin(t * Math.PI), 1.18);
-  const landingTaper = 1 - smoothstep(0.63, 1, t);
+  const shoulder = Math.pow(Math.sin(t * Math.PI), 1.12);
+  const mouth = smoothstep(0.66, 1, t);
   const centralBend =
-    Math.sin(t * Math.PI * 1.72 + 0.42) * (2.4 + shoulder * 2.3) +
-    Math.sin(t * Math.PI * 3.4 + 1.1) * shoulder * 0.85;
-  const width = 2.6 + (5.6 + shoulder * 6.8) * landingTaper;
+    Math.sin(t * Math.PI * 1.64 + 0.38) * (2.8 + shoulder * 2.8) +
+    Math.sin(t * Math.PI * 3.25 + 1.15) * shoulder * 1.05;
+  const bodyRadiusX = 8.8 + shoulder * 10.2;
+  const bodyRadiusZ = 6.2 + shoulder * 7.8;
+  const radiusX = THREE.MathUtils.lerp(bodyRadiusX, 32, mouth);
+  const radiusZ = THREE.MathUtils.lerp(bodyRadiusZ, 8.4, mouth);
+  const crossX = Math.cos(profile.angle) * profile.radius * radiusX;
+  const crossZ = Math.sin(profile.angle) * profile.radius * radiusZ;
   const strandWander =
-    Math.sin(t * (7.2 + phase * 3.4) + phase * 11) *
-    (0.42 + shoulder * 1.45) *
-    (1 - smoothstep(0.78, 1, t) * 0.72);
+    Math.sin(t * (7.4 + profile.phase * 3.2) + profile.phase * 11) *
+    (0.34 + shoulder * 1.25) *
+    (1 - mouth * 0.62);
   const bundleDrift =
-    Math.sin(t * Math.PI * (1.1 + phase * 0.55) + phase * Math.PI * 2) *
+    Math.sin(
+      t * Math.PI * (1.08 + profile.phase * 0.5) +
+      profile.phase * Math.PI * 2,
+    ) *
     Math.sin(t * Math.PI) *
-    (0.55 + Math.abs(lane) * 2.35);
-  const centerZ = THREE.MathUtils.lerp(-8, CONFLUENCE_CENTER_Z, Math.pow(t, 1.16));
-  const depthWidth = (2.2 + shoulder * 4.4) * (0.42 + landingTaper * 0.58);
+    (0.5 + profile.radius * 2.5);
+  const centerZ = THREE.MathUtils.lerp(
+    -10,
+    CONFLUENCE_CENTER_Z + 9.5,
+    Math.pow(t, 1.2),
+  );
+  const mouthLift = (1 - Math.pow(Math.abs(Math.cos(profile.angle)), 1.6))
+    * profile.radius
+    * mouth
+    * 0.5;
   return new THREE.Vector3(
     WATERFALL_CENTER_X +
       centralBend +
-      lane * width +
+      crossX +
       strandWander +
-      bundleDrift,
-    THREE.MathUtils.lerp(topY, SEA_BASE_Y + 0.25, t),
+      bundleDrift +
+      profile.skew * shoulder,
+    THREE.MathUtils.lerp(topY, SEA_BASE_Y + 0.32, t) + mouthLift,
     centerZ +
-      lane * depthWidth +
-      Math.sin(t * 9 + phase * 7) * (0.16 + shoulder * 0.5),
+      crossZ +
+      Math.sin(t * 9.2 + profile.phase * 7) * (0.16 + shoulder * 0.55),
   );
 }
 
@@ -318,48 +340,120 @@ function createWaterfallFibers(
   random: () => number,
   topY: number,
   quality: SceneQuality,
-): { object: THREE.LineSegments; material: THREE.LineBasicMaterial } {
-  const strandCount = quality === "default" ? 112 : 58;
-  const segmentCount = quality === "default" ? 112 : 68;
+): { object: THREE.LineSegments; material: THREE.ShaderMaterial } {
+  const strandCount = quality === "default" ? 168 : 82;
+  const segmentCount = quality === "default" ? 144 : 84;
   const positions: number[] = [];
   const colors: number[] = [];
+  const progresses: number[] = [];
+  const seeds: number[] = [];
+  const speeds: number[] = [];
+  const edges: number[] = [];
   const color = new THREE.Color();
-  const bundleCenters = [-0.9, -0.68, -0.42, -0.16, 0.08, 0.34, 0.61, 0.86];
+  const bundleAngles = Array.from({ length: 14 }, (_, index) =>
+    index / 14 * Math.PI * 2,
+  );
 
   for (let strand = 0; strand < strandCount; strand += 1) {
-    const bundle = bundleCenters[strand % bundleCenters.length];
-    const lane = THREE.MathUtils.clamp(
-      bundle + (random() - 0.5) * (0.12 + random() * 0.15),
-      -1,
-      1,
-    );
     const phase = random();
+    const radius = 0.14 + Math.pow(random(), 0.72) * 0.86;
+    const profile: WaterfallStrandProfile = {
+      angle: bundleAngles[strand % bundleAngles.length] + (random() - 0.5) * 0.3,
+      radius,
+      phase,
+      skew: (random() - 0.5) * 2.2,
+    };
     const strandBrightness = random() < 0.13
       ? 0.68 + random() * 0.34
       : 0.22 + random() * 0.36;
     const startT = random() * 0.045;
     const endT = 0.965 + random() * 0.035;
+    const flowSeed = random();
+    const flowSpeed = 0.72 + random() * 0.72;
+    const edge = smoothstep(0.58, 1, radius);
 
     for (let segment = 0; segment < segmentCount; segment += 1) {
       const t0 = THREE.MathUtils.lerp(startT, endT, segment / segmentCount);
       const t1 = THREE.MathUtils.lerp(startT, endT, (segment + 1) / segmentCount);
-      const start = waterfallPoint(lane, t0, phase, topY);
-      const end = waterfallPoint(lane, t1, phase, topY);
+      const start = waterfallPoint(profile, t0, topY);
+      const end = waterfallPoint(profile, t1, topY);
       positions.push(start.x, start.y, start.z, end.x, end.y, end.z);
       color.copy(waterfallColor(t0, strandBrightness));
       colors.push(color.r, color.g, color.b);
       color.copy(waterfallColor(t1, strandBrightness));
       colors.push(color.r, color.g, color.b);
+      progresses.push(t0, t1);
+      seeds.push(flowSeed, flowSeed);
+      speeds.push(flowSpeed, flowSpeed);
+      edges.push(edge, edge);
     }
   }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  const material = new THREE.LineBasicMaterial({
-    vertexColors: true,
+  geometry.setAttribute("aProgress", new THREE.Float32BufferAttribute(progresses, 1));
+  geometry.setAttribute("aSeed", new THREE.Float32BufferAttribute(seeds, 1));
+  geometry.setAttribute("aSpeed", new THREE.Float32BufferAttribute(speeds, 1));
+  geometry.setAttribute("aEdge", new THREE.Float32BufferAttribute(edges, 1));
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uFlow: { value: 1 },
+      uOpacity: { value: 0.27 },
+    },
+    vertexShader: `
+      attribute vec3 color;
+      attribute float aProgress;
+      attribute float aSeed;
+      attribute float aSpeed;
+      attribute float aEdge;
+
+      varying vec3 vColor;
+      varying float vProgress;
+      varying float vSeed;
+      varying float vSpeed;
+      varying float vEdge;
+
+      void main() {
+        vColor = color;
+        vProgress = aProgress;
+        vSeed = aSeed;
+        vSpeed = aSpeed;
+        vEdge = aEdge;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform float uFlow;
+      uniform float uOpacity;
+
+      varying vec3 vColor;
+      varying float vProgress;
+      varying float vSeed;
+      varying float vSpeed;
+      varying float vEdge;
+
+      void main() {
+        float phase = fract(
+          vProgress * (4.2 + vSeed * 1.7)
+          - uTime * 0.00017 * vSpeed * uFlow
+          + vSeed
+        );
+        float pulse = smoothstep(0.0, 0.045, phase)
+          * (1.0 - smoothstep(0.045, 0.19, phase));
+        float afterglow = smoothstep(0.0, 0.22, phase)
+          * (1.0 - smoothstep(0.22, 0.52, phase));
+        vec3 highlight = vec3(1.0, 0.94, 0.78);
+        vec3 color = mix(vColor, highlight, pulse * (0.42 + vEdge * 0.2));
+        float alpha = uOpacity
+          * (0.34 + vEdge * 0.16 + pulse * 1.55 + afterglow * 0.18);
+        if (alpha <= 0.003) discard;
+        gl_FragColor = vec4(color, alpha);
+      }
+    `,
     transparent: true,
-    opacity: 0.18,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
@@ -379,15 +473,18 @@ function createWaterfallParticles(
   const colors = new Float32Array(count * 3);
   const seeds = new Float32Array(count);
   const speeds = new Float32Array(count);
+  const progresses = new Float32Array(count);
 
   for (let index = 0; index < count; index += 1) {
     const t = Math.pow(random(), 0.92);
-    const coreLane = (random() + random() + random() - 1.5) / 1.5;
-    const lane = random() < 0.1
-      ? THREE.MathUtils.clamp(coreLane * 1.45 + (random() - 0.5) * 0.32, -1, 1)
-      : coreLane * 0.82;
     const phase = random();
-    const point = waterfallPoint(lane, t, phase, topY);
+    const profile: WaterfallStrandProfile = {
+      angle: random() * Math.PI * 2,
+      radius: Math.pow(random(), 0.78),
+      phase,
+      skew: (random() - 0.5) * 2.4,
+    };
+    const point = waterfallPoint(profile, t, topY);
     const radialJitter = 0.24 + Math.sin(t * Math.PI) * 0.64;
     positions[index * 3] = point.x + (random() - 0.5) * radialJitter;
     positions[index * 3 + 1] = point.y + (random() - 0.5) * 0.42;
@@ -398,6 +495,7 @@ function createWaterfallParticles(
     colors[index * 3 + 2] = color.b;
     seeds[index] = phase;
     speeds[index] = 0.6 + random() * 1.2;
+    progresses[index] = t;
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -405,6 +503,7 @@ function createWaterfallParticles(
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
   geometry.setAttribute("aSpeed", new THREE.BufferAttribute(speeds, 1));
+  geometry.setAttribute("aProgress", new THREE.BufferAttribute(progresses, 1));
   const material = new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
@@ -416,8 +515,10 @@ function createWaterfallParticles(
       attribute vec3 color;
       attribute float aSeed;
       attribute float aSpeed;
+      attribute float aProgress;
 
       varying vec3 vColor;
+      varying float vPulse;
       uniform float uTime;
       uniform float uSize;
       uniform float uFlow;
@@ -427,21 +528,35 @@ function createWaterfallParticles(
         float drift = mod(uTime * 0.00007 * aSpeed + aSeed * 3.7, 3.7);
         p.y -= drift * uFlow;
         p.x += sin(p.y * 0.095 + aSeed * 12.0 + uTime * 0.00018) * 0.16 * uFlow;
-        vColor = color;
+        float flowPhase = fract(
+          aProgress * (5.0 + aSeed * 1.8)
+          - uTime * 0.0002 * aSpeed * uFlow
+          + aSeed
+        );
+        vPulse = smoothstep(0.0, 0.08, flowPhase)
+          * (1.0 - smoothstep(0.08, 0.28, flowPhase));
+        vColor = mix(color, vec3(1.0, 0.94, 0.78), vPulse * 0.5);
         vec4 viewPosition = modelViewMatrix * vec4(p, 1.0);
         gl_Position = projectionMatrix * viewPosition;
-        gl_PointSize = clamp(uSize * (300.0 / max(1.0, -viewPosition.z)), 0.7, 4.5);
+        gl_PointSize = clamp(
+          uSize * (1.0 + vPulse * 0.85) * (300.0 / max(1.0, -viewPosition.z)),
+          0.7,
+          5.2
+        );
       }
     `,
     fragmentShader: `
       varying vec3 vColor;
+      varying float vPulse;
       uniform float uOpacity;
 
       void main() {
         float distanceToCenter = length(gl_PointCoord - vec2(0.5));
         float core = 1.0 - smoothstep(0.04, 0.22, distanceToCenter);
         float halo = 1.0 - smoothstep(0.12, 0.5, distanceToCenter);
-        float alpha = (core * 0.78 + halo * 0.22) * uOpacity;
+        float alpha = (core * 0.78 + halo * 0.22)
+          * uOpacity
+          * (0.72 + vPulse * 0.9);
         if (alpha <= 0.003) discard;
         gl_FragColor = vec4(vColor, alpha);
       }
@@ -464,15 +579,19 @@ function createConfluenceFlows(
   const positions: number[] = [];
   const progresses: number[] = [];
   const brights: number[] = [];
+  const seeds: number[] = [];
+  const speeds: number[] = [];
 
   for (let flow = 0; flow < flowCount; flow += 1) {
-    // 多数流线朝镜头方向展开，少数绕向两侧和远方，使落点既有主流向也有完整余波。
-    const angle = random() < 0.68
-      ? Math.PI / 2 + (random() - 0.5) * 2.35
-      : random() * Math.PI * 2;
+    const mouthLane = (random() + random() - 1) * 0.96;
+    // 河口先横向敞开，再以向镜头方向为主流入海面；边缘流线继续向外舒展。
+    const angle = Math.PI / 2
+      - mouthLane * (0.42 + random() * 0.2)
+      + (random() - 0.5) * 0.58;
     const phase = random() * Math.PI * 2;
-    const startRadius = 3 + Math.pow(random(), 1.5) * 11;
-    const length = 38 + Math.pow(random(), 0.72) * 172;
+    const startX = WATERFALL_CENTER_X + mouthLane * 31.5;
+    const startZ = CONFLUENCE_CENTER_Z + 8.5 - Math.abs(mouthLane) * 2.8;
+    const length = 48 + Math.pow(random(), 0.72) * 184;
     const bend = (random() - 0.5) * (0.28 + random() * 0.52);
     const meander = 0.7 + random() * 2.8;
     const meanderFrequency = 1.5 + random() * 0.4;
@@ -480,25 +599,27 @@ function createConfluenceFlows(
       ? 34 + Math.floor(random() * 24)
       : 22 + Math.floor(random() * 16);
     const brightness = 0.42 + random() * 0.66 + (random() < 0.12 ? 0.54 : 0);
+    const flowSeed = random();
+    const flowSpeed = 0.68 + random() * 0.84;
 
-    let previousX = WATERFALL_CENTER_X + Math.cos(angle) * startRadius;
-    let previousZ = CONFLUENCE_CENTER_Z + Math.sin(angle) * startRadius;
+    let previousX = startX;
+    let previousZ = startZ;
     let previousProgress = 0;
 
     for (let step = 1; step <= steps; step += 1) {
       const progress = step / steps;
-      const radius = startRadius + length * Math.pow(progress, 0.9);
+      const radius = length * Math.pow(progress, 0.9);
       const theta =
         angle +
         bend * smoothstep(0.08, 1, progress) +
         Math.sin(progress * Math.PI * meanderFrequency + phase) * 0.025;
       const sideways = Math.sin(progress * Math.PI * 4.2 + phase) * meander;
       const x =
-        WATERFALL_CENTER_X +
+        startX +
         Math.cos(theta) * radius +
         Math.sin(theta) * sideways;
       const z =
-        CONFLUENCE_CENTER_Z +
+        startZ +
         Math.sin(theta) * radius -
         Math.cos(theta) * sideways;
       positions.push(
@@ -511,6 +632,8 @@ function createConfluenceFlows(
       );
       progresses.push(previousProgress, progress);
       brights.push(brightness, brightness);
+      seeds.push(flowSeed, flowSeed);
+      speeds.push(flowSpeed, flowSpeed);
       previousX = x;
       previousZ = z;
       previousProgress = progress;
@@ -521,6 +644,8 @@ function createConfluenceFlows(
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("aProgress", new THREE.Float32BufferAttribute(progresses, 1));
   geometry.setAttribute("aBright", new THREE.Float32BufferAttribute(brights, 1));
+  geometry.setAttribute("aSeed", new THREE.Float32BufferAttribute(seeds, 1));
+  geometry.setAttribute("aSpeed", new THREE.Float32BufferAttribute(speeds, 1));
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -536,6 +661,8 @@ function createConfluenceFlows(
     vertexShader: `
       attribute float aProgress;
       attribute float aBright;
+      attribute float aSeed;
+      attribute float aSpeed;
 
       uniform float uTime;
       uniform float uFlow;
@@ -548,15 +675,19 @@ function createConfluenceFlows(
 
       varying vec3 vColor;
       varying float vAlpha;
+      varying float vProgress;
+      varying float vSeed;
+      varying float vSpeed;
 
       ${OCEAN_HEIGHT_GLSL}
 
       void main() {
         vec3 p = position;
         vec3 disp = oceanDisplace(p.xz);
-        p += disp;
+        float oceanBlend = smoothstep(0.0, 0.18, aProgress);
+        p += disp * oceanBlend;
 
-        float crest = smoothstep(5.0, 17.0, disp.y);
+        float crest = smoothstep(5.0, 17.0, disp.y * oceanBlend);
         float contactLight = 1.0 - smoothstep(0.02, 0.34, aProgress);
         vec3 base = mix(uCore, uFlowColor, smoothstep(0.04, 0.86, aProgress));
         vColor = mix(base, uCrest, crest * 0.56 + contactLight * 0.12)
@@ -564,7 +695,7 @@ function createConfluenceFlows(
 
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, -mv.z);
-        float entryFade = smoothstep(0.0, 0.13, aProgress);
+        float entryFade = 0.42 + smoothstep(0.0, 0.09, aProgress) * 0.58;
         float reachFade = 1.0 - smoothstep(0.68, 1.0, aProgress);
         vAlpha = uOpacity
           * horizonFade
@@ -572,16 +703,33 @@ function createConfluenceFlows(
           * (0.2 + reachFade * 0.8)
           * (0.62 + contactLight * 0.56)
           * min(aBright, 1.35);
+        vProgress = aProgress;
+        vSeed = aSeed;
+        vSpeed = aSpeed;
         gl_Position = projectionMatrix * mv;
       }
     `,
     fragmentShader: `
       varying vec3 vColor;
       varying float vAlpha;
+      varying float vProgress;
+      varying float vSeed;
+      varying float vSpeed;
+
+      uniform float uTime;
+      uniform float uFlow;
 
       void main() {
         if (vAlpha <= 0.003) discard;
-        gl_FragColor = vec4(vColor, vAlpha);
+        float phase = fract(
+          vProgress * (4.6 + vSeed * 1.8)
+          - uTime * 0.00016 * vSpeed * uFlow
+          + vSeed
+        );
+        float pulse = smoothstep(0.0, 0.05, phase)
+          * (1.0 - smoothstep(0.05, 0.2, phase));
+        vec3 color = mix(vColor, vec3(1.0, 0.95, 0.8), pulse * 0.58);
+        gl_FragColor = vec4(color, vAlpha * (0.7 + pulse * 1.25));
       }
     `,
     transparent: true,
@@ -1050,16 +1198,16 @@ export function createHistoryVisuals(options: {
   const confluenceGlow = createGlowSprite(
     radialTexture,
     0xffd890,
-    0.3,
+    0.2,
     new THREE.Vector3(WATERFALL_CENTER_X, 2.4, CONFLUENCE_CENTER_Z),
-    new THREE.Vector2(96, 25),
+    new THREE.Vector2(128, 22),
   );
   const confluenceCore = createGlowSprite(
     radialTexture,
     0xfff4df,
-    0.34,
-    new THREE.Vector3(WATERFALL_CENTER_X, 1.6, CONFLUENCE_CENTER_Z + 1),
-    new THREE.Vector2(34, 10),
+    0.22,
+    new THREE.Vector3(WATERFALL_CENTER_X, 1.4, CONFLUENCE_CENTER_Z + 7),
+    new THREE.Vector2(72, 8),
   );
   const horizonMist = createGlowSprite(
     cloudTexture,
@@ -1098,7 +1246,9 @@ export function createHistoryVisuals(options: {
       waterfallParticles.material.uniforms.uTime.value = lowMotion ? 0 : now;
       waterfallParticles.material.uniforms.uFlow.value = lowMotion ? 0 : 1;
       waterfallParticles.material.uniforms.uOpacity.value = 0.4 * visibility;
-      waterfallFibers.material.opacity = 0.36 * visibility;
+      waterfallFibers.material.uniforms.uTime.value = now;
+      waterfallFibers.material.uniforms.uFlow.value = lowMotion ? 0 : 1;
+      waterfallFibers.material.uniforms.uOpacity.value = 0.29 * visibility;
 
       // 编织海面与浪花：uTime 驱动波浪仿真，低动态偏好时冻结起伏但保留静态海面。
       const oceanFlow = lowMotion ? 0 : 1;
@@ -1118,11 +1268,11 @@ export function createHistoryVisuals(options: {
 
       const breath = lowMotion ? 1 : 1 + Math.sin(now * 0.00045) * 0.045;
       sourceGlow.scale.set(42 * breath, 48 * breath, 1);
-      confluenceGlow.scale.set(92 * breath, 23 * breath, 1);
-      confluenceCore.scale.set(32 * breath, 10 * breath, 1);
+      confluenceGlow.scale.set(124 * breath, 21 * breath, 1);
+      confluenceCore.scale.set(68 * breath, 8 * breath, 1);
       (sourceGlow.material as THREE.SpriteMaterial).opacity = 0.22 * visibility;
-      (confluenceGlow.material as THREE.SpriteMaterial).opacity = 0.13 * visibility;
-      (confluenceCore.material as THREE.SpriteMaterial).opacity = 0.16 * visibility;
+      (confluenceGlow.material as THREE.SpriteMaterial).opacity = 0.085 * visibility;
+      (confluenceCore.material as THREE.SpriteMaterial).opacity = 0.09 * visibility;
       (horizonMist.material as THREE.SpriteMaterial).opacity = 0.08 * visibility;
       (seaMist.material as THREE.SpriteMaterial).opacity = 0.065 * visibility;
 

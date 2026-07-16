@@ -206,7 +206,7 @@ export function HistoryRiver() {
     const topY = historicalYearToY(RIVER_START_YEAR);
     const visuals = createHistoryVisuals({
       seed: fixture.seed,
-      topY: topY + 10,
+      topY: topY + 36,
       quality,
     });
     riverGroup.add(visuals.root);
@@ -598,14 +598,14 @@ export function HistoryRiver() {
         const portraitMix = 1 - THREE.MathUtils.smoothstep(camera.aspect, 0.72, 1.15);
         return {
           position: new THREE.Vector3(
-            THREE.MathUtils.lerp(50, 42, portraitMix),
-            34,
-            THREE.MathUtils.lerp(218, 232, portraitMix),
+            THREE.MathUtils.lerp(54, 42, portraitMix),
+            46,
+            THREE.MathUtils.lerp(238, 252, portraitMix),
           ),
           target: new THREE.Vector3(
-            THREE.MathUtils.lerp(-28, 4, portraitMix),
-            30,
-            0,
+            THREE.MathUtils.lerp(-18, 6, portraitMix),
+            49,
+            4,
           ),
           up: new THREE.Vector3(0, 1, 0),
         };
@@ -691,7 +691,7 @@ export function HistoryRiver() {
 
       const focus = focusYearRef.current;
       const currentView = viewRef.current;
-      geography.update(focus, currentView, lowMotionRef.current);
+      geography.update(now, focus, currentView, lowMotionRef.current);
 
       // 丝线 uniform：维度权重、汇流程度与显影参数平滑插值
       const lerpK = lowMotionRef.current ? 0.05 : 0.1;

@@ -15,7 +15,12 @@ import {
 
 export interface HistoryGeographyRig {
   root: THREE.Group;
-  update(focusYear: number, view: ExperienceState, lowMotion: boolean): void;
+  update(
+    now: number,
+    focusYear: number,
+    view: ExperienceState,
+    lowMotion: boolean,
+  ): void;
 }
 
 const volumeOpacity: Record<ExperienceState, number> = {
@@ -59,6 +64,9 @@ function createVolumeMaterial(opacity: number, additive: boolean): THREE.ShaderM
       uOpacity: { value: opacity },
       uStartYear: { value: RIVER_START_YEAR },
       uEndYear: { value: CONTENT_END_YEAR },
+      uTime: { value: 0 },
+      uFlow: { value: 1 },
+      uLongitudinal: { value: additive ? 1 : 0 },
       // 视图距离 0(贴近切片)→1(远景总览)：越远越收敛为整体流体，越近越显个体年轮。
       uViewDistance: { value: 1 },
     },
@@ -69,22 +77,41 @@ function createVolumeMaterial(opacity: number, additive: boolean): THREE.ShaderM
       varying vec3 vColor;
       varying float vFocus;
       varying float vUncertainty;
+      varying float vEra;
+      varying float vFlowOffset;
 
       uniform float uFocusYear;
       uniform float uFocusRadius;
       uniform float uStartYear;
       uniform float uEndYear;
 
+      // 这些颜色是对各时期礼制与器物色彩的低饱和视觉转译，不作为唯一官方色断言。
+      vec3 historicalPeriodColor(float year) {
+        vec3 color = vec3(0.33, 0.46, 0.43); // 上古与先秦：青铜青
+        color = mix(color, vec3(0.55, 0.25, 0.22), smoothstep(-245.0, -205.0, year));
+        color = mix(color, vec3(0.45, 0.50, 0.56), smoothstep(190.0, 250.0, year));
+        color = mix(color, vec3(0.72, 0.52, 0.25), smoothstep(565.0, 620.0, year));
+        color = mix(color, vec3(0.43, 0.59, 0.55), smoothstep(885.0, 940.0, year));
+        color = mix(color, vec3(0.30, 0.43, 0.61), smoothstep(1245.0, 1290.0, year));
+        color = mix(color, vec3(0.62, 0.25, 0.22), smoothstep(1345.0, 1385.0, year));
+        color = mix(color, vec3(0.68, 0.55, 0.24), smoothstep(1620.0, 1660.0, year));
+        color = mix(color, vec3(0.76, 0.70, 0.58), smoothstep(1885.0, 1920.0, year));
+        return color;
+      }
+
       void main() {
         float era = clamp((aYear - uStartYear) / (uEndYear - uStartYear), 0.0, 1.0);
         vec3 celestial = vec3(0.53, 0.66, 0.76);
         vec3 ivory = vec3(0.86, 0.84, 0.79);
         vec3 memoryGold = vec3(0.91, 0.80, 0.63);
-        vColor = era < 0.72
+        vec3 riverColor = era < 0.72
           ? mix(celestial, ivory, smoothstep(0.05, 0.72, era))
           : mix(ivory, memoryGold, smoothstep(0.72, 1.0, era) * 0.72);
+        vColor = mix(riverColor, historicalPeriodColor(aYear), 0.22);
         vFocus = 1.0 - smoothstep(0.0, uFocusRadius, abs(aYear - uFocusYear));
         vUncertainty = aUncertainty;
+        vEra = era;
+        vFlowOffset = fract(sin(dot(position.xz, vec2(12.9898, 78.233))) * 43758.5453);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
@@ -92,9 +119,14 @@ function createVolumeMaterial(opacity: number, additive: boolean): THREE.ShaderM
       varying vec3 vColor;
       varying float vFocus;
       varying float vUncertainty;
+      varying float vEra;
+      varying float vFlowOffset;
 
       uniform float uOpacity;
       uniform float uViewDistance;
+      uniform float uTime;
+      uniform float uFlow;
+      uniform float uLongitudinal;
 
       void main() {
         // 不确定度越高，边缘越暗、色温略偏冷（资料稀疏区不伪装成确定疆界）。
@@ -103,9 +135,19 @@ function createVolumeMaterial(opacity: number, additive: boolean): THREE.ShaderM
         // 远景放大焦点对比，贴近时抬升整体上下文，形成沉积层的体量感。
         float focusGain = mix(0.62, 1.0, uViewDistance);
         float baseFloor = mix(0.5, 0.34, uViewDistance);
+        float phase = fract(
+          vEra * (7.5 + vFlowOffset * 1.2)
+          - uTime * 0.000075 * uFlow
+          + vFlowOffset
+        );
+        float flowLight = smoothstep(0.0, 0.035, phase)
+          * (1.0 - smoothstep(0.035, 0.16, phase))
+          * uLongitudinal;
+        color = mix(color, vec3(0.96, 0.90, 0.74), flowLight * 0.34);
         float alpha = uOpacity
           * mix(baseFloor, 1.0, vFocus * focusGain)
-          * mix(0.55, 1.0, confidence);
+          * mix(0.55, 1.0, confidence)
+          * (1.0 + flowLight * 0.72);
         if (alpha <= 0.0005) discard;
         gl_FragColor = vec4(color, alpha);
       }
@@ -233,10 +275,14 @@ export function createHistoryGeography(): HistoryGeographyRig {
 
   return {
     root,
-    update(focusYear, view, lowMotion) {
+    update(now, focusYear, view, lowMotion) {
       const transition = lowMotion ? 0.18 : 0.08;
       sliceMaterial.uniforms.uFocusYear.value = focusYear;
       longitudinalMaterial.uniforms.uFocusYear.value = focusYear;
+      sliceMaterial.uniforms.uTime.value = now;
+      longitudinalMaterial.uniforms.uTime.value = now;
+      sliceMaterial.uniforms.uFlow.value = lowMotion ? 0 : 1;
+      longitudinalMaterial.uniforms.uFlow.value = lowMotion ? 0 : 1;
       const targetViewDistance = viewDistance[view];
       sliceMaterial.uniforms.uViewDistance.value +=
         (targetViewDistance - sliceMaterial.uniforms.uViewDistance.value) * transition;
