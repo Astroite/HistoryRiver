@@ -56,9 +56,6 @@ const SEA_THREAD_LEN_MAX = 30;
 // 这样丝线能真正"披"在起伏的波面上并顺流摆动，动起来是活的水，而不是整体上下抽动的死板平面。
 // 频率配比：一道长波做大圆丘骨架，中频波供短丝线（10–30 单位）看到曲率并贴合，细纹增加流动细节。
 // 流线丝线与浪花点云共用，保证同一片海协同起伏。
-//
-// 单一数据源：GLSL 波函数与 CPU 端高度/梯度（用于按地形梯度确定丝线朝向）都从此表生成，
-// 二者波参数严格一致，故 CPU 定的朝向与 GPU 起伏的波面对齐。
 interface OceanWave {
   dir: readonly [number, number]; // 归一化传播方向
   wavelength: number;
@@ -125,45 +122,6 @@ ${OCEAN_WAVES.map(
 
   float oceanHeight(vec2 q) { return oceanDisplace(q).y; }
 `;
-
-// CPU 端静态波面高度（t=0，uAmp=1），与 GLSL oceanDisplace().y 同参数。用于按梯度确定丝线朝向。
-function oceanHeightStatic(x: number, z: number): number {
-  let h = 0;
-  for (const w of OCEAN_WAVES) {
-    const k = (2 * Math.PI) / w.wavelength;
-    h += w.amp * Math.sin(k * (w.dir[0] * x + w.dir[1] * z));
-  }
-  const impactDistance = Math.hypot(
-    x - WATERFALL_CENTER_X,
-    z - CONFLUENCE_CENTER_Z,
-  );
-  const impactEnvelope = smoothstep(
-    CONFLUENCE_RIPPLE.near,
-    CONFLUENCE_RIPPLE.near + 10,
-    impactDistance,
-  ) * (1 - smoothstep(
-    CONFLUENCE_RIPPLE.far - 55,
-    CONFLUENCE_RIPPLE.far,
-    impactDistance,
-  ));
-  h += CONFLUENCE_RIPPLE.amp * Math.sin(
-    (2 * Math.PI * impactDistance) / CONFLUENCE_RIPPLE.wavelength,
-  ) * impactEnvelope;
-  return h;
-}
-
-// 波面高度梯度 ∇h（中心差分）。等高线切向（梯度顺时针转 90°）即丝线的自然流向。
-function oceanGradient(x: number, z: number): [number, number] {
-  const e = 1.5;
-  const gx = (oceanHeightStatic(x + e, z) - oceanHeightStatic(x - e, z)) / (2 * e);
-  const gz = (oceanHeightStatic(x, z + e) - oceanHeightStatic(x, z - e)) / (2 * e);
-  return [gx, gz];
-}
-
-// 将角度归一到 (-π, π]。
-function wrapAngle(a: number): number {
-  return a - 2 * Math.PI * Math.floor((a + Math.PI) / (2 * Math.PI));
-}
 
 function seededRandom(seed: number): () => number {
   let value = seed >>> 0;
@@ -575,68 +533,70 @@ function createConfluenceFlows(
   random: () => number,
   quality: SceneQuality,
 ): { object: THREE.LineSegments; material: THREE.ShaderMaterial } {
-  const flowCount = quality === "default" ? 310 : 150;
+  const bundleCount = quality === "default" ? 22 : 14;
+  const strandCount = quality === "default" ? 3 : 2;
   const positions: number[] = [];
   const progresses: number[] = [];
   const brights: number[] = [];
   const seeds: number[] = [];
   const speeds: number[] = [];
 
-  for (let flow = 0; flow < flowCount; flow += 1) {
-    const mouthLane = (random() + random() - 1) * 0.96;
-    // 河口先横向敞开，再以向镜头方向为主流入海面；边缘流线继续向外舒展。
-    const angle = Math.PI / 2
-      - mouthLane * (0.42 + random() * 0.2)
-      + (random() - 0.5) * 0.58;
+  for (let bundle = 0; bundle < bundleCount; bundle += 1) {
+    const lane = THREE.MathUtils.lerp(-0.94, 0.94, bundle / (bundleCount - 1))
+      + Math.sin(bundle * 1.73) * 0.014;
+    const angle = Math.PI / 2 - lane * 0.54;
     const phase = random() * Math.PI * 2;
-    const startX = WATERFALL_CENTER_X + mouthLane * 31.5;
-    const startZ = CONFLUENCE_CENTER_Z + 8.5 - Math.abs(mouthLane) * 2.8;
-    const length = 48 + Math.pow(random(), 0.72) * 184;
-    const bend = (random() - 0.5) * (0.28 + random() * 0.52);
-    const meander = 0.7 + random() * 2.8;
-    const meanderFrequency = 1.5 + random() * 0.4;
-    const steps = quality === "default"
-      ? 34 + Math.floor(random() * 24)
-      : 22 + Math.floor(random() * 16);
-    const brightness = 0.42 + random() * 0.66 + (random() < 0.12 ? 0.54 : 0);
+    const length = 82 + Math.pow(random(), 0.72) * 148;
+    const bend = (random() - 0.5) * 0.08;
+    const meander = 0.45 + random() * 0.75;
+    const steps = quality === "default" ? 48 : 30;
+    const brightness = 0.48 + random() * 0.48 + (random() < 0.08 ? 0.3 : 0);
     const flowSeed = random();
-    const flowSpeed = 0.68 + random() * 0.84;
+    const flowSpeed = 0.72 + random() * 0.62;
 
-    let previousX = startX;
-    let previousZ = startZ;
-    let previousProgress = 0;
+    for (let strand = 0; strand < strandCount; strand += 1) {
+      const strandOffset = strand - (strandCount - 1) / 2;
+      const mouthLane = lane + strandOffset * 0.018;
+      const startX = WATERFALL_CENTER_X + mouthLane * 31.5;
+      const startZ = CONFLUENCE_CENTER_Z + 8.5 - Math.abs(mouthLane) * 2.8;
+      const strandAngle = angle - strandOffset * 0.006;
+      const targetAngle = mouthLane < 0 ? Math.PI : 0;
+      const strandLength = length * (1 + strandOffset * 0.012);
+      const strandBright = brightness * (0.88 + strand * 0.06);
+      const strandSeed = flowSeed + strandOffset * 0.025;
 
-    for (let step = 1; step <= steps; step += 1) {
-      const progress = step / steps;
-      const radius = length * Math.pow(progress, 0.9);
-      const theta =
-        angle +
-        bend * smoothstep(0.08, 1, progress) +
-        Math.sin(progress * Math.PI * meanderFrequency + phase) * 0.025;
-      const sideways = Math.sin(progress * Math.PI * 4.2 + phase) * meander;
-      const x =
-        startX +
-        Math.cos(theta) * radius +
-        Math.sin(theta) * sideways;
-      const z =
-        startZ +
-        Math.sin(theta) * radius -
-        Math.cos(theta) * sideways;
-      positions.push(
-        previousX,
-        SEA_BASE_Y + 0.32,
-        previousZ,
-        x,
-        SEA_BASE_Y + 0.32,
-        z,
-      );
-      progresses.push(previousProgress, progress);
-      brights.push(brightness, brightness);
-      seeds.push(flowSeed, flowSeed);
-      speeds.push(flowSpeed, flowSpeed);
-      previousX = x;
-      previousZ = z;
-      previousProgress = progress;
+      let previousX = startX;
+      let previousZ = startZ;
+      let previousProgress = 0;
+      let previousWob = Math.sin(phase) * meander;
+
+      for (let step = 1; step <= steps; step += 1) {
+        const progress = step / steps;
+        const turn = smoothstep(0.08, 0.88, progress);
+        const theta = THREE.MathUtils.lerp(strandAngle, targetAngle, turn)
+          + Math.sin(progress * Math.PI) * bend;
+        const along = strandLength / steps * (0.76 + progress * 0.24);
+        const wob = Math.sin(progress * Math.PI * 2.8 + phase) * meander;
+        const sideways = wob - previousWob;
+        const x = previousX + Math.cos(theta) * along - Math.sin(theta) * sideways;
+        const z = previousZ + Math.sin(theta) * along + Math.cos(theta) * sideways;
+        positions.push(
+          previousX,
+          SEA_BASE_Y + 0.32,
+          previousZ,
+          x,
+          SEA_BASE_Y + 0.32,
+          z,
+        );
+        progresses.push(previousProgress, progress);
+        brights.push(strandBright, strandBright);
+        seeds.push(strandSeed, strandSeed);
+        speeds.push(flowSpeed, flowSpeed);
+        previousX = x;
+        previousZ = z;
+        previousProgress = progress;
+        previousWob = wob;
+      }
     }
   }
 
@@ -747,102 +707,134 @@ function createFlowingOcean(
   random: () => number,
   quality: SceneQuality,
 ): { object: THREE.LineSegments; material: THREE.ShaderMaterial } {
-  // 纯丝线三维光海：铺满无边海域，无任何水体面片。
-  // - 每根丝线很短（SEA_THREAD_LEN_MIN..MAX 单位），象征一段人生片段。
-  // - 一个家族 = 多段短丝线错落汇聚（首尾续接 + 横向错位）成的一条更长的粗线条，象征代际传承。
-  // - 海面(y≈SEA_BASE_Y)代表 1949「当下」；丝线可沉入海面之下，越深越淡，表示不可知的未来。
-  const lineageCount = quality === "default" ? 3000 : 1200;
+  // 海洋先由少量共享主流线建立整体潮向，再沿法向派生平行短丝束。
+  // 方向只来自连续低频流场，随机数不再逐段控制转向，因此相邻流带保持顺序而不会盘根错节。
+  const ribbonCount = quality === "default" ? 104 : 58;
+  const stepLength = quality === "default" ? 4 : 6;
   const xMin = WATERFALL_CENTER_X - SEA_X_HALF;
   const width = SEA_X_HALF * 2;
-  const zMin = SEA_Z_MIN;
   const zRange = SEA_Z_MAX - SEA_Z_MIN;
 
   const positions: number[] = [];
   const brights: number[] = [];
-  const depths: number[] = []; // 0 = 海面(当下) .. 1 = 最深(不可知的未来)
+  const depths: number[] = [];
+  const layers: number[] = []; // 0 = 远景主流带，1 = 中景家族短丝束
+  const flowCoords: number[] = [];
+  const flowSeeds: number[] = [];
 
-  for (let lineage = 0; lineage < lineageCount; lineage += 1) {
-    // 家族起点铺满整片平面。丝线大致沿波脊横向流动（±x），带小幅摆动，贴合涌浪走向。
-    let x = xMin + width * random();
-    let z = zMin + zRange * random();
-    let heading = (random() < 0.5 ? 0 : Math.PI) + (random() - 0.5) * 0.9;
+  interface FlowPoint {
+    x: number;
+    z: number;
+    slope: number;
+    distance: number;
+  }
 
-    const lineageBright = 0.26 + random() * 0.5 + (random() < 0.12 ? 0.7 : 0);
-    const generations = 3 + Math.floor(random() * 5); // 每个家族 3..7 段续接
-    // 该家族并行子丝线数量：错落叠加使续接的长条看上去更粗。
-    const strands = 2 + Math.floor(random() * 2);
-    let depth = random() * 0.12;
+  const currentSlope = (x: number, z: number): number => {
+    const longTide = Math.sin(x * 0.0085 + z * 0.0032) * 0.052;
+    const crossTide = Math.sin(z * 0.011 - x * 0.0024 + 1.2) * 0.032;
+    const mouthX = (x - WATERFALL_CENTER_X) / 126;
+    const mouthZ = (z - CONFLUENCE_CENTER_Z) / 104;
+    const mouthInfluence = Math.exp(-(mouthX * mouthX + mouthZ * mouthZ));
+    return THREE.MathUtils.clamp(
+      longTide + crossTide + mouthInfluence * 0.31,
+      -0.16,
+      0.38,
+    );
+  };
 
-    for (let generation = 0; generation < generations; generation += 1) {
-      // 单段短丝线长度：10..30 单位。
-      const threadLen =
-        SEA_THREAD_LEN_MIN + random() * (SEA_THREAD_LEN_MAX - SEA_THREAD_LEN_MIN);
-      const steps = 14 + Math.floor(random() * 6); // 14..19 段折线，弧线更平滑柔顺
-      const along = threadLen / steps;
-      const meanderAmp = 1.2 + random() * 2.0;
-      const meanderFreq = 0.4 + random() * 0.9;
-      const phase = random() * Math.PI * 2;
-      // 这一代整体下沉量：多数近海面(已知)，少数沉向未来(变淡)。
-      const depthGain = random() < 0.5 ? random() * 0.1 : 0;
-      // 换代处横向错位（错落），使续接点重叠汇聚而非直线拼接。
-      const handoffPerpX = Math.sin(heading);
-      const handoffPerpZ = -Math.cos(heading);
-      const handoff = (random() - 0.5) * 2.2;
-      x += handoffPerpX * handoff;
-      z += handoffPerpZ * handoff;
-      const startX = x;
-      const startZ = z;
-      const startHeading = heading;
-      const startDepth = depth;
+  const offsetPoint = (point: FlowPoint, offset: number, depth: number) => {
+    const normalLength = Math.hypot(point.slope, 1);
+    return {
+      x: point.x - point.slope / normalLength * offset,
+      y: SEA_BASE_Y - depth * SEA_DEPTH_BELOW,
+      z: point.z + offset / normalLength,
+    };
+  };
 
-      for (let strand = 0; strand < strands; strand += 1) {
-        // 每根并行子丝线相对家族中心的小横向偏移与亮度扰动。
-        const strandOffset = (strand - (strands - 1) / 2) * (0.4 + random() * 0.5);
-        const strandBright = lineageBright * (0.8 + random() * 0.45);
-        let sHeading = startHeading;
-        let px = startX + handoffPerpX * strandOffset;
-        let pz = startZ + handoffPerpZ * strandOffset;
-        let pDepth = startDepth;
-        let py = SEA_BASE_Y - pDepth * SEA_DEPTH_BELOW;
-        for (let step = 1; step <= steps; step += 1) {
-          const s = step / steps;
-          // 按地形梯度确定朝向：丝线顺着波面等高线（梯度的切向）流动，自然贴合涌浪走向。
-          const [gx, gz] = oceanGradient(px, pz);
-          let targetHeading = sHeading;
-          if (gx * gx + gz * gz > 1e-6) {
-            // 等高线切向（梯度顺时针转 90°）。两个反向切向里取与当前朝向更接近者，避免翻转。
-            let tHeading = Math.atan2(gx, -gz);
-            if (Math.abs(wrapAngle(tHeading - sHeading)) > Math.PI / 2) {
-              tHeading = wrapAngle(tHeading + Math.PI);
-            }
-            targetHeading = tHeading;
-          }
-          // 平缓转向目标朝向（0.35 权重）并叠加小抖动，柔顺而不生硬。
-          sHeading += wrapAngle(targetHeading - sHeading) * 0.35 + (random() - 0.5) * 0.05;
-          const dirX = Math.cos(sHeading);
-          const dirZ = Math.sin(sHeading);
-          const perpX = Math.sin(sHeading);
-          const perpZ = -Math.cos(sHeading);
-          const wob = Math.sin(s * Math.PI * meanderFreq * 2 + phase) * meanderAmp;
-          const nx = px + dirX * along + perpX * wob * 0.35;
-          const nz = pz + dirZ * along + perpZ * wob * 0.35;
-          const nDepth = Math.min(0.98, startDepth + depthGain * s);
-          const ny = SEA_BASE_Y - nDepth * SEA_DEPTH_BELOW;
-          positions.push(px, py, pz, nx, ny, nz);
-          brights.push(strandBright, strandBright);
-          depths.push(pDepth, nDepth);
-          px = nx;
-          pz = nz;
-          py = ny;
-          pDepth = nDepth;
-        }
+  const appendSegment = (
+    start: FlowPoint,
+    end: FlowPoint,
+    offset: number,
+    depth: number,
+    bright: number,
+    layer: number,
+    seed: number,
+  ) => {
+    const a = offsetPoint(start, offset, depth);
+    const b = offsetPoint(end, offset, depth);
+    positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+    brights.push(bright, bright);
+    depths.push(depth, depth);
+    layers.push(layer, layer);
+    flowCoords.push(start.distance / 42, end.distance / 42);
+    flowSeeds.push(seed, seed);
+  };
+
+  for (let ribbon = 0; ribbon < ribbonCount; ribbon += 1) {
+    const seedZ = SEA_Z_MIN
+      + (ribbon + 0.5) / ribbonCount * zRange
+      + Math.sin(ribbon * 1.71) * 1.35;
+    const centerline: FlowPoint[] = [];
+    let x = xMin - stepLength * 2;
+    let z = seedZ;
+    let distance = 0;
+    while (x <= xMin + width + stepLength * 2) {
+      const slope = currentSlope(x, z);
+      centerline.push({ x, z, slope, distance });
+      const nextX = x + stepLength;
+      const nextSlope = currentSlope(nextX, z + slope * stepLength);
+      z += (slope + nextSlope) * 0.5 * stepLength;
+      x = nextX;
+      distance += stepLength * Math.hypot(1, (slope + nextSlope) * 0.5);
+    }
+
+    // 第一层：每条主流线只留一根低亮长线，负责远景秩序和潮汐尺度。
+    const baseDepth = random() < 0.12
+      ? 0.045 + random() * 0.09
+      : random() * 0.025;
+    const baseBright = 0.27 + random() * 0.26;
+    const baseSeed = random();
+    for (let index = 0; index < centerline.length - 1; index += 1) {
+      appendSegment(
+        centerline[index],
+        centerline[index + 1],
+        0,
+        baseDepth,
+        baseBright,
+        0,
+        baseSeed,
+      );
+    }
+
+    // 第二层：隔带生成三根平行短丝，长度仍对应一段人生，但共享同一条家族主流线。
+    if (ribbon % 2 !== 0) continue;
+    const strandCount = quality === "default" ? 3 : 2;
+    for (let strand = 0; strand < strandCount; strand += 1) {
+      const offset = (strand - (strandCount - 1) / 2) * 0.9;
+      const strokeLength = THREE.MathUtils.lerp(
+        SEA_THREAD_LEN_MIN,
+        SEA_THREAD_LEN_MAX,
+        random(),
+      );
+      const strokeSteps = Math.max(2, Math.round(strokeLength / stepLength));
+      const gapSteps = 2 + Math.floor(random() * 4);
+      const cycleSteps = strokeSteps + gapSteps;
+      const cycleOffset = Math.floor(random() * cycleSteps);
+      const depth = random() * 0.018;
+      const bright = 0.48 + random() * 0.4 + (random() < 0.08 ? 0.32 : 0);
+      const seed = random();
+      for (let index = 0; index < centerline.length - 1; index += 1) {
+        if ((index + cycleOffset) % cycleSteps >= strokeSteps) continue;
+        appendSegment(
+          centerline[index],
+          centerline[index + 1],
+          offset,
+          depth,
+          bright,
+          1,
+          seed,
+        );
       }
-
-      // 家族中心推进到本段短丝线终点，供下一段续接（沿平均朝向前进一整段长度）。
-      x += Math.cos(startHeading) * threadLen;
-      z += Math.sin(startHeading) * threadLen;
-      heading = startHeading;
-      depth = Math.min(0.96, depth + depthGain);
     }
   }
 
@@ -850,6 +842,9 @@ function createFlowingOcean(
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("aBright", new THREE.Float32BufferAttribute(brights, 1));
   geometry.setAttribute("aDepth", new THREE.Float32BufferAttribute(depths, 1));
+  geometry.setAttribute("aLayer", new THREE.Float32BufferAttribute(layers, 1));
+  geometry.setAttribute("aFlowCoord", new THREE.Float32BufferAttribute(flowCoords, 1));
+  geometry.setAttribute("aFlowSeed", new THREE.Float32BufferAttribute(flowSeeds, 1));
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -869,6 +864,9 @@ function createFlowingOcean(
     vertexShader: `
       attribute float aBright;
       attribute float aDepth;
+      attribute float aLayer;
+      attribute float aFlowCoord;
+      attribute float aFlowSeed;
 
       uniform float uTime;
       uniform float uFlow;
@@ -883,6 +881,9 @@ function createFlowingOcean(
 
       varying vec3 vColor;
       varying float vAlpha;
+      varying float vFlowCoord;
+      varying float vFlowSeed;
+      varying float vLayer;
 
       ${OCEAN_HEIGHT_GLSL}
 
@@ -896,11 +897,13 @@ function createFlowingOcean(
         float h = disp.y;
 
         float d = clamp((p.z - uZRange.x) / (uZRange.y - uZRange.x), 0.0, 1.0);
-        // 沿深度做冷暖：远处略沉，近处更亮金。
-        vec3 base = mix(uNear, uFar, smoothstep(0.1, 0.95, d));
+        // 近景稍暖、远景更沉；长主流线比家族短丝束再暗一级。
+        vec3 base = mix(uFar, uNear, smoothstep(0.08, 0.92, d));
         // 波峰高度归一（振幅约 ±22）：脊顶提亮为白金。
         float crest = smoothstep(5.0, 17.0, h);
-        vec3 col = mix(base, uCrest, crest * 0.9) * aBright;
+        vec3 col = mix(base, uCrest, crest * 0.82)
+          * aBright
+          * mix(0.66, 1.0, aLayer);
         // 沉入未来：变冷变暗。
         col = mix(col, uDeep, aDepth * 0.8);
         vColor = col;
@@ -912,17 +915,38 @@ function createFlowingOcean(
         float viewDist = -mv.z;
         float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, viewDist);
         // 波脊更亮、波谷偏暗，强化滚动涌浪的体积感。
-        vAlpha = uOpacity * horizonFade * depthFade * (0.35 + crest * 1.1);
+        vAlpha = uOpacity
+          * horizonFade
+          * depthFade
+          * mix(0.16 + crest * 0.38, 0.6 + crest * 0.84, aLayer);
+        vFlowCoord = aFlowCoord;
+        vFlowSeed = aFlowSeed;
+        vLayer = aLayer;
         gl_Position = projectionMatrix * mv;
       }
     `,
     fragmentShader: `
       varying vec3 vColor;
       varying float vAlpha;
+      varying float vFlowCoord;
+      varying float vFlowSeed;
+      varying float vLayer;
+
+      uniform float uTime;
+      uniform float uFlow;
 
       void main() {
         if (vAlpha <= 0.003) discard;
-        gl_FragColor = vec4(vColor, vAlpha);
+        float phase = fract(
+          vFlowCoord
+          - uTime * 0.00011 * (0.76 + vFlowSeed * 0.48) * uFlow
+          + vFlowSeed
+        );
+        float pulse = smoothstep(0.0, 0.045, phase)
+          * (1.0 - smoothstep(0.045, 0.19, phase));
+        float pulseStrength = mix(0.16, 0.82, vLayer) * pulse;
+        vec3 color = mix(vColor, vec3(1.0, 0.95, 0.82), pulseStrength * 0.5);
+        gl_FragColor = vec4(color, vAlpha * (1.0 + pulseStrength));
       }
     `,
     transparent: true,
@@ -940,7 +964,7 @@ function createSeaFoam(
   random: () => number,
   quality: SceneQuality,
 ): { object: THREE.Points; material: THREE.ShaderMaterial } {
-  const count = quality === "default" ? 78000 : 26000;
+  const count = quality === "default" ? 26000 : 10000;
   const xMin = WATERFALL_CENTER_X - SEA_X_HALF;
   const width = SEA_X_HALF * 2;
   const zRange = SEA_Z_MAX - SEA_Z_MIN;
@@ -953,8 +977,8 @@ function createSeaFoam(
     positions[index * 3 + 1] = SEA_BASE_Y;
     positions[index * 3 + 2] = SEA_Z_MIN + zRange * random();
     brights[index] = 0.5 + random() * 1.15;
-    // 约 26% 的颗粒作为"垂落光丝"，从海面向下悬垂不同长度，在前景波谷下方拉出金色细丝没入黑暗。
-    drips[index] = random() < 0.26 ? Math.pow(random(), 1.5) * 52 : 0;
+    // 极少量短垂光保留海面纵深，不再形成大面积根系状悬丝。
+    drips[index] = random() < 0.045 ? Math.pow(random(), 1.7) * 22 : 0;
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
@@ -1006,15 +1030,15 @@ function createSeaFoam(
         float sag = aDrip * (0.6 + 0.4 * sin(t * 1.7 + p.x * 0.05));
         p.y -= sag;
         float d = clamp((p.z - uZRange.x) / (uZRange.y - uZRange.x), 0.0, 1.0);
-        vec3 base = mix(uNear, uFar, smoothstep(0.1, 0.95, d));
+        vec3 base = mix(uFar, uNear, smoothstep(0.08, 0.92, d));
         float crest = smoothstep(5.0, 17.0, h);
         vColor = mix(base, uCrest, crest * 0.8) * aBright;
         // 垂落段随下坠变暗，融入下方黑暗。
-        float dripFade = 1.0 - smoothstep(0.0, 52.0, sag) * 0.82;
+        float dripFade = 1.0 - smoothstep(0.0, 22.0, sag) * 0.82;
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         // 视距淡出：远处渐隐至零，浪花没入黑暗，与丝线海协同形成无际地平。
         float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, -mv.z);
-        vAlpha = uOpacity * horizonFade * dripFade * (0.4 + crest * 1.0);
+        vAlpha = uOpacity * horizonFade * dripFade * (0.07 + crest * 1.08);
         gl_Position = projectionMatrix * mv;
         gl_PointSize = clamp(uSize * (300.0 / max(1.0, -mv.z)), 0.6, 3.6);
       }
