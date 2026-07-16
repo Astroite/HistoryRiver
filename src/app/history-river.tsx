@@ -1,18 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 import {
-  CONTENT_END_YEAR,
+  createHistoryPostProcessing,
+  createHistoryVisuals,
+} from "@/app/history-river-visuals";
+
+import {
   DEFAULT_FOCUS_YEAR,
   OBSERVATION_SPAN,
   RIVER_START_YEAR,
   abstractChina,
   buildFigureThreads,
-  createObservationWindow,
-  formatHistoricalYear,
   guideStateAtSeconds,
   historicalYearToY,
   influenceAt,
@@ -22,30 +24,6 @@ import {
   type ExperienceState,
   type InfluenceDimension,
 } from "@/lib/history/model";
-
-const stateLabels: Record<ExperienceState, string> = {
-  "river-overview": "观河",
-  "entering-window": "入流",
-  slice: "观事",
-  "person-focus": "逐人",
-  "relation-focus": "溯源",
-};
-
-const stateNotes: Record<ExperienceState, string> = {
-  "river-overview": "站在今天，仰望九天长河",
-  "entering-window": "穿过光瀑，丝线逐渐显出姓名",
-  slice: "俯看山河，人物因事件聚散",
-  "person-focus": "沿一根丝线，观看完整一生",
-  "relation-focus": "思想越过生命边界继续流动",
-};
-
-const dimensionLabels: Record<InfluenceDimension, string> = {
-  overall: "综合",
-  political: "政治",
-  military: "军事",
-  thought: "思想",
-  culture: "文化",
-};
 
 // 维度 → 影响力权重目标（one-hot；culture 走独立通道）。切换维度只插值该目标。
 const dimensionTargets: Record<
@@ -70,44 +48,20 @@ const threadStateStyle: Record<
     geoSpread: number;
   }
 > = {
-  "river-overview": { width: 0.85, glow: 0.6, opacity: 0.55, context: 0, geoSpread: 0 },
-  "entering-window": { width: 1.1, glow: 1, opacity: 0.82, context: 0.22, geoSpread: 0.55 },
-  slice: { width: 1.5, glow: 1.2, opacity: 0.95, context: 0.34, geoSpread: 1 },
-  "person-focus": { width: 1.6, glow: 1.3, opacity: 1, context: 0.4, geoSpread: 1 },
-  "relation-focus": { width: 1.05, glow: 0.75, opacity: 0.5, context: 0.22, geoSpread: 1 },
+  "river-overview": { width: 0.32, glow: 0.32, opacity: 0.3, context: 0, geoSpread: 0 },
+  "entering-window": { width: 0.42, glow: 0.5, opacity: 0.5, context: 0.12, geoSpread: 0.55 },
+  slice: { width: 0.48, glow: 0.62, opacity: 0.62, context: 0.2, geoSpread: 1 },
+  "person-focus": { width: 0.54, glow: 0.7, opacity: 0.7, context: 0.24, geoSpread: 1 },
+  "relation-focus": { width: 0.38, glow: 0.46, opacity: 0.4, context: 0.14, geoSpread: 1 },
 };
 
-interface RenderStats {
-  medianMs: number;
-  p95Ms: number;
-  calls: number;
-  points: number;
-  lines: number;
-}
-
-interface AudioRig {
-  context: AudioContext;
-  gain: GainNode;
-  low: OscillatorNode;
-  high: OscillatorNode;
-}
-
-function seededRandom(seed: number): () => number {
-  let value = seed >>> 0;
-  return () => {
-    value += 0x6d2b79f5;
-    let result = value;
-    result = Math.imul(result ^ (result >>> 15), result | 1);
-    result ^= result + Math.imul(result ^ (result >>> 7), result | 61);
-    return ((result ^ (result >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function percentile(values: number[], ratio: number): number {
-  if (values.length === 0) return 0;
-  const ordered = [...values].sort((a, b) => a - b);
-  return ordered[Math.min(ordered.length - 1, Math.floor(ordered.length * ratio))];
-}
+const experienceStates = new Set<ExperienceState>([
+  "river-overview",
+  "entering-window",
+  "slice",
+  "person-focus",
+  "relation-focus",
+]);
 
 function disposeScene(scene: THREE.Scene) {
   scene.traverse((object) => {
@@ -135,58 +89,16 @@ export function HistoryRiver() {
   const guidePlayingRef = useRef(true);
   const guideEpochRef = useRef(0);
   const lowMotionRef = useRef(false);
-  const audioRef = useRef<AudioRig | null>(null);
-
-  const [view, setView] = useState<ExperienceState>("river-overview");
-  const [focusYear, setFocusYear] = useState(DEFAULT_FOCUS_YEAR);
-  const [dimension, setDimension] = useState<InfluenceDimension>("overall");
-  const [selectedPersonId, setSelectedPersonId] = useState(
-    fixture.persons[3].id,
-  );
-  const [selectedRelationId, setSelectedRelationId] = useState(
-    fixture.relations[0].id,
-  );
-  const [hoveredPersonId, setHoveredPersonId] = useState<string | null>(null);
-  const [guidePlaying, setGuidePlaying] = useState(true);
-  const [guideSeconds, setGuideSeconds] = useState(0);
-  const [lowMotion, setLowMotion] = useState(false);
-  const [quality, setQuality] = useState<"default" | "reduced">("default");
-  const [soundOn, setSoundOn] = useState(false);
-  const [stats, setStats] = useState<RenderStats>({
-    medianMs: 0,
-    p95Ms: 0,
-    calls: 0,
-    points: 0,
-    lines: 0,
-  });
-
-  const selectedPerson = useMemo(
-    () =>
-      fixture.persons.find((person) => person.id === selectedPersonId) ??
-      fixture.persons[0],
-    [fixture.persons, selectedPersonId],
-  );
-  const selectedRelation = useMemo(
-    () =>
-      fixture.relations.find((relation) => relation.id === selectedRelationId) ??
-      fixture.relations[0],
-    [fixture.relations, selectedRelationId],
-  );
-  const windowRange = useMemo(
-    () => createObservationWindow(focusYear),
-    [focusYear],
-  );
+  const quality = "default" as const;
 
   const stopGuide = useCallback(() => {
     guidePlayingRef.current = false;
-    setGuidePlaying(false);
   }, []);
 
   const directTo = useCallback(
     (next: ExperienceState) => {
       stopGuide();
       viewRef.current = next;
-      setView(next);
       cameraDirectedRef.current = true;
     },
     [stopGuide],
@@ -195,7 +107,6 @@ export function HistoryRiver() {
   const selectPerson = useCallback(
     (personId: string) => {
       selectedPersonRef.current = personId;
-      setSelectedPersonId(personId);
       directTo("person-focus");
     },
     [directTo],
@@ -204,7 +115,6 @@ export function HistoryRiver() {
   const selectRelation = useCallback(
     (relationId: string) => {
       selectedRelationRef.current = relationId;
-      setSelectedRelationId(relationId);
       directTo("relation-focus");
     },
     [directTo],
@@ -213,58 +123,13 @@ export function HistoryRiver() {
   const startGuide = useCallback(() => {
     guideEpochRef.current = performance.now();
     guidePlayingRef.current = true;
-    setGuidePlaying(true);
-    setGuideSeconds(0);
     viewRef.current = "river-overview";
-    setView("river-overview");
     cameraDirectedRef.current = true;
   }, []);
-
-  const toggleSound = useCallback(async () => {
-    if (!audioRef.current) {
-      const context = new AudioContext();
-      const gain = context.createGain();
-      const low = context.createOscillator();
-      const high = context.createOscillator();
-      low.type = "sine";
-      high.type = "sine";
-      low.frequency.value = 46;
-      high.frequency.value = 92;
-      gain.gain.value = 0;
-      low.connect(gain);
-      high.connect(gain);
-      gain.connect(context.destination);
-      low.start();
-      high.start();
-      audioRef.current = { context, gain, low, high };
-    }
-    const rig = audioRef.current;
-    await rig.context.resume();
-    const next = !soundOn;
-    rig.gain.gain.setTargetAtTime(next ? 0.012 : 0, rig.context.currentTime, 0.08);
-    setSoundOn(next);
-  }, [soundOn]);
-
-  useEffect(() => {
-    viewRef.current = view;
-  }, [view]);
-
-  useEffect(() => {
-    focusYearRef.current = focusYear;
-  }, [focusYear]);
-
-  useEffect(() => {
-    dimensionRef.current = dimension;
-  }, [dimension]);
-
-  useEffect(() => {
-    lowMotionRef.current = lowMotion;
-  }, [lowMotion]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
     const syncPreference = () => {
-      setLowMotion(media.matches);
       lowMotionRef.current = media.matches;
     };
     queueMicrotask(syncPreference);
@@ -273,19 +138,12 @@ export function HistoryRiver() {
   }, []);
 
   useEffect(() => {
-    const rig = audioRef.current;
-    if (!rig || !soundOn) return;
-    const frequencies: Record<ExperienceState, readonly [number, number]> = {
-      "river-overview": [46, 92],
-      "entering-window": [52, 104],
-      slice: [58, 116],
-      "person-focus": [62, 124],
-      "relation-focus": [69, 138],
-    };
-    const [low, high] = frequencies[view];
-    rig.low.frequency.setTargetAtTime(low, rig.context.currentTime, 0.4);
-    rig.high.frequency.setTargetAtTime(high, rig.context.currentTime, 0.4);
-  }, [soundOn, view]);
+    const requestedView = new URLSearchParams(window.location.search).get("view");
+    if (!requestedView || !experienceStates.has(requestedView as ExperienceState)) return;
+    guidePlayingRef.current = false;
+    viewRef.current = requestedView as ExperienceState;
+    cameraDirectedRef.current = true;
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -306,10 +164,10 @@ export function HistoryRiver() {
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x02070b);
-    scene.fog = new THREE.FogExp2(0x02070b, 0.0085);
+    scene.fog = new THREE.FogExp2(0x02070b, 0.0032);
 
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 320);
-    camera.position.set(42, 58, 110);
+    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 520);
+    camera.position.set(50, 34, 218);
     camera.up.set(0, 1, 0);
 
     const renderer = new THREE.WebGLRenderer({
@@ -322,21 +180,22 @@ export function HistoryRiver() {
     );
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 1.05;
     renderer.domElement.className = "history-canvas";
     renderer.domElement.setAttribute(
       "aria-label",
       "由人物丝线、事件点云和思想丝线构成的三维历史长河；每根丝线是一个人物，粗细与辉光表示其影响力",
     );
     mount.appendChild(renderer.domElement);
+    const postProcessing = createHistoryPostProcessing(renderer, scene, camera);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.055;
     controls.enablePan = true;
-    controls.minDistance = 5;
-    controls.maxDistance = 160;
-    controls.target.set(0, 58, 0);
+    controls.minDistance = 7;
+    controls.maxDistance = 280;
+    controls.target.set(-28, 30, 0);
     controls.addEventListener("start", () => {
       cameraDirectedRef.current = false;
       stopGuide();
@@ -344,86 +203,13 @@ export function HistoryRiver() {
 
     const riverGroup = new THREE.Group();
     scene.add(riverGroup);
-
-    const random = seededRandom(fixture.seed + (quality === "default" ? 1 : 2));
-    const riverParticleCount = quality === "default" ? 30000 : 9000;
-    const riverPositions = new Float32Array(riverParticleCount * 3);
-    const riverColors = new Float32Array(riverParticleCount * 3);
-    const cold = new THREE.Color(0x5ca9b8);
-    const warm = new THREE.Color(0xd9b56d);
     const topY = historicalYearToY(RIVER_START_YEAR);
-    for (let index = 0; index < riverParticleCount; index += 1) {
-      const y = random() * topY;
-      const age = y / topY;
-      const width = 3.2 + Math.sin(age * Math.PI) * 4.8;
-      const bend = Math.sin(y * 0.075) * 2.4;
-      riverPositions[index * 3] = bend + (random() + random() + random() - 1.5) * width;
-      riverPositions[index * 3 + 1] = y;
-      riverPositions[index * 3 + 2] = (random() + random() - 1) * width * 0.62;
-      const color = cold.clone().lerp(warm, 0.18 + (1 - age) * 0.2);
-      color.multiplyScalar(0.45 + random() * 0.75);
-      riverColors[index * 3] = color.r;
-      riverColors[index * 3 + 1] = color.g;
-      riverColors[index * 3 + 2] = color.b;
-    }
-    const riverGeometry = new THREE.BufferGeometry();
-    riverGeometry.setAttribute("position", new THREE.BufferAttribute(riverPositions, 3));
-    riverGeometry.setAttribute("color", new THREE.BufferAttribute(riverColors, 3));
-    const riverMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uSize: { value: quality === "default" ? 1.05 : 1.18 },
-        uOpacity: { value: 0.72 },
-      },
-      vertexShader: `
-        attribute vec3 color;
-        varying vec3 vColor;
-        uniform float uSize;
-
-        void main() {
-          vColor = color;
-          vec4 viewPosition = modelViewMatrix * vec4(position, 1.0);
-          gl_Position = projectionMatrix * viewPosition;
-          gl_PointSize = clamp(uSize * (280.0 / max(1.0, -viewPosition.z)), 1.0, 6.0);
-        }
-      `,
-      fragmentShader: `
-        varying vec3 vColor;
-        uniform float uOpacity;
-
-        void main() {
-          float distanceToCenter = length(gl_PointCoord - vec2(0.5));
-          float halo = 1.0 - smoothstep(0.08, 0.5, distanceToCenter);
-          if (halo <= 0.0) discard;
-          gl_FragColor = vec4(vColor, halo * uOpacity);
-        }
-      `,
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
+    const visuals = createHistoryVisuals({
+      seed: fixture.seed,
+      topY: topY + 10,
+      quality,
     });
-    const riverParticles = new THREE.Points(riverGeometry, riverMaterial);
-    riverGroup.add(riverParticles);
-
-    const seaParticleCount = quality === "default" ? 9000 : 2500;
-    const seaPositions = new Float32Array(seaParticleCount * 3);
-    for (let index = 0; index < seaParticleCount; index += 1) {
-      const radius = Math.sqrt(random()) * 44;
-      const angle = random() * Math.PI * 2;
-      seaPositions[index * 3] = Math.cos(angle) * radius;
-      seaPositions[index * 3 + 1] = (random() - 0.5) * 0.3;
-      seaPositions[index * 3 + 2] = Math.sin(angle) * radius;
-    }
-    const seaGeometry = new THREE.BufferGeometry();
-    seaGeometry.setAttribute("position", new THREE.BufferAttribute(seaPositions, 3));
-    const seaMaterial = new THREE.PointsMaterial({
-      color: 0x7fc9ca,
-      size: 0.11,
-      transparent: true,
-      opacity: 0.42,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    riverGroup.add(new THREE.Points(seaGeometry, seaMaterial));
+    riverGroup.add(visuals.root);
 
     // --- 人物丝线（带状几何）：每个人物一根贯穿生卒的主题色丝线 ------------------
     const threadData = buildFigureThreads(fixture, {
@@ -461,6 +247,22 @@ export function HistoryRiver() {
       "aEntityId",
       new THREE.BufferAttribute(threadData.entityIds, 1),
     );
+    // 事件参与度作为丝线的第二层注意力：切片时参与者保持清晰，外围生命退入上下文。
+    const eventMembership = new Float32Array(threadData.vertexCount * 2);
+    for (let vertexIndex = 0; vertexIndex < threadData.vertexCount; vertexIndex += 1) {
+      const person = fixture.persons[Math.trunc(threadData.entityIds[vertexIndex])];
+      if (!person) continue;
+      eventMembership[vertexIndex * 2] = fixture.events[0].participantIds.includes(person.id)
+        ? 1
+        : 0;
+      eventMembership[vertexIndex * 2 + 1] = fixture.events[1].participantIds.includes(person.id)
+        ? 1
+        : 0;
+    }
+    threadGeometry.setAttribute(
+      "aEventMembership",
+      new THREE.BufferAttribute(eventMembership, 2),
+    );
     threadGeometry.setIndex(new THREE.BufferAttribute(threadData.index, 1));
 
     const threadMaterial = new THREE.ShaderMaterial({
@@ -477,6 +279,11 @@ export function HistoryRiver() {
         uFeather: { value: 9 },
         uBend: { value: 0.075 },
         uRiverWidth: { value: 6.5 },
+        uRiverCenterX: { value: 6 },
+        uEvent0Year: { value: fixture.events[0].year },
+        uEvent1Year: { value: fixture.events[1].year },
+        uEventRadius: { value: 11 },
+        uEventEmphasis: { value: 0 },
         uSelectedId: { value: -1 },
         uHoveredId: { value: -1 },
       },
@@ -490,6 +297,7 @@ export function HistoryRiver() {
         attribute float aYear;
         attribute float aLane;
         attribute float aEntityId;
+        attribute vec2 aEventMembership;
 
         uniform vec4 uDimWeights;
         uniform float uDimCulture;
@@ -500,6 +308,10 @@ export function HistoryRiver() {
         uniform float uFeather;
         uniform float uBend;
         uniform float uRiverWidth;
+        uniform float uRiverCenterX;
+        uniform float uEvent0Year;
+        uniform float uEvent1Year;
+        uniform float uEventRadius;
         uniform float uSelectedId;
         uniform float uHoveredId;
 
@@ -508,6 +320,7 @@ export function HistoryRiver() {
         varying float vAcross;
         varying float vFade;
         varying float vEmph;
+        varying float vEventAffinity;
 
         void main() {
           float infl = dot(uDimWeights, aInfluence) + uDimCulture * aCulture;
@@ -516,7 +329,10 @@ export function HistoryRiver() {
           // 远景收拢入河 / 近景散到真实地理位置
           vec3 p = position;
           float bend = sin(p.y * uBend) * 2.4;
-          vec2 riverXZ = vec2(bend + aLane * uRiverWidth, aLane * uRiverWidth * 0.25);
+          vec2 riverXZ = vec2(
+            uRiverCenterX + bend + aLane * uRiverWidth,
+            aLane * uRiverWidth * 0.25
+          );
           p.xz = mix(riverXZ, p.xz, uGeoSpread);
 
           float isSel = 1.0 - step(0.5, abs(aEntityId - uSelectedId));
@@ -525,6 +341,21 @@ export function HistoryRiver() {
           float emph = mix(1.0, mix(0.35, 1.2, isSel), hasSel);
           emph = max(emph, isHov * 0.9);
           vEmph = emph;
+
+          float event0Proximity = 1.0 - smoothstep(
+            0.0,
+            uEventRadius,
+            abs(uFocusYear - uEvent0Year)
+          );
+          float event1Proximity = 1.0 - smoothstep(
+            0.0,
+            uEventRadius,
+            abs(uFocusYear - uEvent1Year)
+          );
+          vEventAffinity = max(
+            aEventMembership.x * event0Proximity,
+            aEventMembership.y * event1Proximity
+          );
 
           float halfWidth = uWidthScale * (0.06 + infl * 0.34) * emph;
 
@@ -553,13 +384,21 @@ export function HistoryRiver() {
         uniform float uOpacity;
         uniform float uGlowScale;
         uniform float uContextOpacity;
+        uniform float uEventEmphasis;
 
         void main() {
           float edge = 1.0 - abs(vAcross);
-          float glow = pow(edge, 2.0) * (0.4 + vGlow * uGlowScale);
-          vec3 color = vColor * (0.55 + glow);
-          float alpha = vFade * edge * uOpacity * vEmph;
-          alpha = max(alpha, edge * uContextOpacity * 0.14 * vEmph);
+          float glow = pow(edge, 2.0) * (0.18 + vGlow * uGlowScale * 0.56);
+          vec3 celestial = vec3(0.53, 0.66, 0.76);
+          vec3 memoryGold = vec3(0.91, 0.80, 0.63);
+          vec3 color = mix(celestial, vColor, 0.28) * (0.38 + glow * 0.68);
+          color = mix(color, memoryGold, clamp((vEmph - 1.0) * 0.7, 0.0, 0.32));
+          float eventAttention = mix(1.0, 0.28 + vEventAffinity * 0.72, uEventEmphasis);
+          float alpha = vFade * edge * uOpacity * vEmph * eventAttention;
+          alpha = max(
+            alpha,
+            edge * uContextOpacity * 0.14 * vEmph * mix(1.0, eventAttention, 0.72)
+          );
           if (alpha <= 0.004) discard;
           gl_FragColor = vec4(color, alpha);
         }
@@ -578,10 +417,10 @@ export function HistoryRiver() {
       const [r, g, b] = themeColorFor(person, fixture.seed);
       return new THREE.Color(r, g, b);
     });
-    const nodeGeometry = new THREE.SphereGeometry(1, 12, 12);
+    const nodeGeometry = new THREE.SphereGeometry(0.55, 10, 10);
     const nodeMaterial = new THREE.MeshBasicMaterial({
       transparent: true,
-      opacity: 0.95,
+      opacity: 0.78,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
@@ -630,9 +469,9 @@ export function HistoryRiver() {
       );
       const geometry = new THREE.BufferGeometry().setFromPoints(curve.getPoints(42));
       const colors: Record<typeof relation.kind, number> = {
-        direct: 0xffe5a1,
-        "documented-indirect": 0x75d8cf,
-        "scholarly-inference": 0xc49aec,
+        direct: 0xe7cca0,
+        "documented-indirect": 0x8baeba,
+        "scholarly-inference": 0x9aaabd,
       };
       const material = new THREE.LineBasicMaterial({
         color: colors[relation.kind],
@@ -651,56 +490,40 @@ export function HistoryRiver() {
       riverGroup.add(line);
     }
 
-    const eventRings: THREE.Mesh[] = [];
-    for (const event of fixture.events) {
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(1.35, 0.02, 6, 72),
-        new THREE.MeshBasicMaterial({
-          color: 0xd4b36f,
-          transparent: true,
-          opacity: 0.2,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-        }),
-      );
-      ring.rotation.x = Math.PI / 2;
-      ring.position.set(
+    const eventClouds: THREE.Points[] = [];
+    for (let eventIndex = 0; eventIndex < fixture.events.length; eventIndex += 1) {
+      const event = fixture.events[eventIndex];
+      const pointCount = quality === "default" ? 180 : 80;
+      const positions = new Float32Array(pointCount * 3);
+      for (let index = 0; index < pointCount; index += 1) {
+        const t = index / Math.max(1, pointCount - 1);
+        const angle = index * 2.399963 + eventIndex * 0.83;
+        const radius = Math.sqrt(t) * (0.55 + Math.sin(index * 1.73) * 0.11);
+        positions[index * 3] = Math.cos(angle) * radius;
+        positions[index * 3 + 1] = Math.sin(index * 2.17) * 0.08;
+        positions[index * 3 + 2] = Math.sin(angle) * radius * 0.68;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      const material = new THREE.PointsMaterial({
+        color: 0xe7cca0,
+        size: 0.075,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const cloud = new THREE.Points(geometry, material);
+      cloud.position.set(
         event.center[0],
         historicalYearToY(event.year),
         event.center[1],
       );
-      ring.userData.eventYear = event.year;
-      riverGroup.add(ring);
-      eventRings.push(ring);
+      cloud.userData.eventYear = event.year;
+      cloud.renderOrder = 4;
+      riverGroup.add(cloud);
+      eventClouds.push(cloud);
     }
-
-    const windowHeight = Math.abs(
-      historicalYearToY(DEFAULT_FOCUS_YEAR - 10) -
-        historicalYearToY(DEFAULT_FOCUS_YEAR + 10),
-    );
-    const windowGeometry = new THREE.BoxGeometry(24, windowHeight, 18);
-    const windowMaterial = new THREE.MeshBasicMaterial({
-      color: 0x88a8a5,
-      transparent: true,
-      opacity: 0.004,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    const windowMesh = new THREE.Mesh(
-      windowGeometry,
-      windowMaterial,
-    );
-    const windowEdgeMaterial = new THREE.LineBasicMaterial({
-      color: 0x89aaa8,
-      transparent: true,
-      opacity: 0.07,
-      blending: THREE.NormalBlending,
-    });
-    const windowEdges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(windowGeometry),
-      windowEdgeMaterial,
-    );
-    riverGroup.add(windowMesh, windowEdges);
 
     // --- 抽象中国地理方位图：海岸线 + 黄河 + 长江（俯视切片的方位参照）---------
     const geographyGroup = new THREE.Group();
@@ -723,22 +546,10 @@ export function HistoryRiver() {
       line.userData.baseOpacity = baseOpacity;
       geographyGroup.add(line);
     };
-    addGeographyLine(abstractChina.coastline, 0x5c8f93, 1); // 海岸线
-    addGeographyLine(abstractChina.rivers.yellow, 0xc7a86a, 1); // 黄河（暖）
-    addGeographyLine(abstractChina.rivers.yangtze, 0x6fb3c4, 1); // 长江（冷）
+    addGeographyLine(abstractChina.coastline, 0x7893a5, 1); // 海岸线
+    addGeographyLine(abstractChina.rivers.yellow, 0xc4ad87, 1); // 黄河（暖）
+    addGeographyLine(abstractChina.rivers.yangtze, 0x789cb9, 1); // 长江（冷）
     riverGroup.add(geographyGroup);
-
-    const sourceGlow = new THREE.Mesh(
-      new THREE.SphereGeometry(10, 20, 20),
-      new THREE.MeshBasicMaterial({
-        color: 0x8baeb2,
-        transparent: true,
-        opacity: 0.05,
-        side: THREE.BackSide,
-      }),
-    );
-    sourceGlow.position.set(0, topY + 5, 0);
-    riverGroup.add(sourceGlow);
 
     const raycaster = new THREE.Raycaster();
     raycaster.params.Line = { threshold: 0.42 };
@@ -749,11 +560,7 @@ export function HistoryRiver() {
     const tempColor = new THREE.Color();
     const selectedColor = new THREE.Color(0xffdc8a);
     const hoveredColor = new THREE.Color(0xffffff);
-    const frameSamples: number[] = [];
-    let previousFrame = performance.now();
-    let lastStatsAt = previousFrame;
     let lastGuideStage = "";
-    let lastGuideUiAt = 0;
     let lastHoverId: string | null = null;
 
     const resize = () => {
@@ -762,6 +569,7 @@ export function HistoryRiver() {
       camera.aspect = rect.width / rect.height;
       camera.updateProjectionMatrix();
       renderer.setSize(rect.width, rect.height, false);
+      postProcessing.resize(rect.width, rect.height);
     };
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(mount);
@@ -784,7 +592,6 @@ export function HistoryRiver() {
       if (nextId !== lastHoverId) {
         lastHoverId = nextId;
         hoveredPersonRef.current = nextId;
-        setHoveredPersonId(nextId);
         renderer.domElement.style.cursor = nextId ? "pointer" : "grab";
       }
     };
@@ -812,8 +619,8 @@ export function HistoryRiver() {
       const currentView = viewRef.current;
       if (currentView === "river-overview") {
         return {
-          position: new THREE.Vector3(42, 58, 110),
-          target: new THREE.Vector3(0, 58, 0),
+          position: new THREE.Vector3(50, 34, 218),
+          target: new THREE.Vector3(-28, 30, 0),
           up: new THREE.Vector3(0, 1, 0),
         };
       }
@@ -865,57 +672,41 @@ export function HistoryRiver() {
       };
     };
 
-    renderer.setAnimationLoop((now) => {
-      const delta = Math.min(100, now - previousFrame);
-      previousFrame = now;
-      frameSamples.push(delta);
-      if (frameSamples.length > 240) frameSamples.shift();
+    const initialAnchor = cameraAnchor();
+    camera.position.copy(initialAnchor.position);
+    camera.up.copy(initialAnchor.up);
+    controls.target.copy(initialAnchor.target);
+    camera.lookAt(initialAnchor.target);
+    controls.update();
 
+    renderer.setAnimationLoop((now) => {
       if (guidePlayingRef.current) {
         if (guideEpochRef.current === 0) guideEpochRef.current = now;
         const seconds = (now - guideEpochRef.current) / 1000;
         if (seconds >= 75) {
           guidePlayingRef.current = false;
-          setGuidePlaying(false);
-          setGuideSeconds(75);
           viewRef.current = "river-overview";
-          setView("river-overview");
           cameraDirectedRef.current = true;
         } else {
           const stage = guideStateAtSeconds(seconds);
           if (stage !== lastGuideStage) {
             lastGuideStage = stage;
             viewRef.current = stage;
-            setView(stage);
             cameraDirectedRef.current = true;
             if (stage === "slice") {
               focusYearRef.current = fixture.events[0].year;
-              setFocusYear(fixture.events[0].year);
             }
             if (stage === "relation-focus") {
               selectedRelationRef.current = fixture.relations[0].id;
-              setSelectedRelationId(fixture.relations[0].id);
             }
-          }
-          if (now - lastGuideUiAt > 250) {
-            setGuideSeconds(seconds);
-            lastGuideUiAt = now;
           }
         }
       }
 
       const focus = focusYearRef.current;
       const focusY = historicalYearToY(focus);
-      windowMesh.position.y = focusY;
-      windowEdges.position.y = focusY;
       geographyGroup.position.y = focusY + 0.02;
       const currentView = viewRef.current;
-      const showWindow =
-        currentView === "river-overview" || currentView === "entering-window";
-      windowMesh.visible = showWindow;
-      windowEdges.visible = showWindow;
-      windowMaterial.opacity = currentView === "entering-window" ? 0.008 : 0.003;
-      windowEdgeMaterial.opacity = currentView === "entering-window" ? 0.12 : 0.055;
 
       const showGeography =
         currentView === "slice" ||
@@ -946,6 +737,15 @@ export function HistoryRiver() {
       uniforms.uContextOpacity.value +=
         (style.context - uniforms.uContextOpacity.value) * lerpK;
       uniforms.uGeoSpread.value += (style.geoSpread - uniforms.uGeoSpread.value) * lerpK;
+      const eventEmphasisByView: Record<ExperienceState, number> = {
+        "river-overview": 0,
+        "entering-window": 0.18,
+        slice: 0.78,
+        "person-focus": 0.18,
+        "relation-focus": 0.32,
+      };
+      uniforms.uEventEmphasis.value +=
+        (eventEmphasisByView[currentView] - uniforms.uEventEmphasis.value) * lerpK;
       uniforms.uFocusYear.value = focus;
       const selectedIndex = fixture.persons.findIndex(
         (person) => person.id === selectedPersonRef.current,
@@ -971,7 +771,7 @@ export function HistoryRiver() {
             ? 1
             : 1 + Math.sin(now * 0.002 + index) * 0.06;
           const size = alive
-            ? (0.12 + strength * 0.34) * pulse * (isSelected ? 1.5 : 1)
+            ? (0.08 + strength * 0.22) * pulse * (isSelected ? 1.28 : 1)
             : 0.0001;
           tempScale.setScalar(size);
           tempMatrix.compose(
@@ -998,7 +798,7 @@ export function HistoryRiver() {
         material.opacity =
           currentView === "relation-focus"
             ? selected
-              ? 0.92
+              ? 0.46
               : 0
             : currentView === "person-focus"
               ? touchesSelectedPerson
@@ -1012,38 +812,18 @@ export function HistoryRiver() {
         line.visible = material.opacity > 0;
       }
 
-      for (let index = 0; index < eventRings.length; index += 1) {
-        const ring = eventRings[index];
-        ring.visible = currentView === "slice" || currentView === "person-focus";
-        const distance = Math.abs(focus - (ring.userData.eventYear as number));
+      for (let index = 0; index < eventClouds.length; index += 1) {
+        const cloud = eventClouds[index];
+        cloud.visible = currentView === "slice" || currentView === "person-focus";
+        const distance = Math.abs(focus - (cloud.userData.eventYear as number));
         const relevance = Math.max(0.08, 1 - distance / 12);
-        const pulse = lowMotionRef.current ? 1 : 1 + Math.sin(now * 0.003 + index) * 0.13;
-        ring.scale.setScalar((0.7 + relevance * 0.7) * pulse);
-        (ring.material as THREE.MeshBasicMaterial).opacity = 0.05 + relevance * 0.27;
+        const drift = lowMotionRef.current ? 0 : now * 0.00008 * (index % 2 === 0 ? 1 : -1);
+        cloud.rotation.y = drift;
+        cloud.scale.setScalar(0.86 + relevance * 0.48);
+        (cloud.material as THREE.PointsMaterial).opacity = 0.04 + relevance * 0.22;
       }
 
-      const isOverview = currentView === "river-overview";
-      riverMaterial.uniforms.uSize.value = isOverview
-        ? quality === "default" ? 1.72 : 1.55
-        : currentView === "entering-window"
-          ? quality === "default" ? 0.92 : 1.04
-          : quality === "default" ? 0.78 : 0.9;
-      riverMaterial.uniforms.uOpacity.value = isOverview
-        ? 0.9
-        : currentView === "entering-window"
-          ? 0.36
-          : currentView === "slice"
-            ? 0.24
-            : 0.14;
-      seaMaterial.opacity = isOverview
-        ? 0.38
-        : currentView === "entering-window"
-          ? 0.16
-          : 0.08;
-      riverParticles.rotation.y = lowMotionRef.current ? 0 : now * 0.000025;
-      sourceGlow.scale.setScalar(
-        lowMotionRef.current ? 1 : 1 + Math.sin(now * 0.0007) * 0.08,
-      );
+      visuals.update(now, currentView, lowMotionRef.current);
 
       if (cameraDirectedRef.current) {
         const anchor = cameraAnchor();
@@ -1053,18 +833,8 @@ export function HistoryRiver() {
         controls.target.lerp(anchor.target, motion);
       }
       controls.update();
-      renderer.render(scene, camera);
+      postProcessing.render();
 
-      if (now - lastStatsAt > 1000) {
-        setStats({
-          medianMs: percentile(frameSamples, 0.5),
-          p95Ms: percentile(frameSamples, 0.95),
-          calls: renderer.info.render.calls,
-          points: renderer.info.render.points,
-          lines: renderer.info.render.lines,
-        });
-        lastStatsAt = now;
-      }
     });
 
     return () => {
@@ -1073,238 +843,18 @@ export function HistoryRiver() {
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("click", onClick);
       controls.dispose();
+      visuals.dispose();
+      postProcessing.dispose();
       disposeScene(scene);
       renderer.dispose();
       renderer.domElement.remove();
     };
   }, [fixture, quality, selectPerson, selectRelation, stopGuide]);
 
-  useEffect(
-    () => () => {
-      const rig = audioRef.current;
-      if (!rig) return;
-      rig.low.stop();
-      rig.high.stop();
-      void rig.context.close();
-    },
-    [],
-  );
-
-  const changeFocusYear = (year: number) => {
-    stopGuide();
-    focusYearRef.current = year;
-    setFocusYear(year);
-    cameraDirectedRef.current = true;
-  };
-
-  const changeDimension = (next: InfluenceDimension) => {
-    stopGuide();
-    dimensionRef.current = next;
-    setDimension(next);
-  };
-
-  const toggleLowMotion = () => {
-    const next = !lowMotion;
-    lowMotionRef.current = next;
-    setLowMotion(next);
-    cameraDirectedRef.current = true;
-  };
-
-  const relationSource = fixture.persons.find(
-    (person) => person.id === selectedRelation.sourcePersonId,
-  );
-  const relationTarget = fixture.persons.find(
-    (person) => person.id === selectedRelation.targetPersonId,
-  );
-
   return (
     <main className="history-shell">
       <div ref={mountRef} className="history-stage" />
       <div className="history-vignette" aria-hidden="true" />
-
-      <header className="history-header">
-        <div className="history-brand">
-          <span className="history-seal">史</span>
-          <div>
-            <p className="history-kicker">LUO JIU CHUAN · P0</p>
-            <h1>落九川</h1>
-          </div>
-        </div>
-        <div className="history-badges" aria-label="原型状态">
-          <span>原型 · 模拟数据</span>
-          <span>观察窗口 20 年</span>
-          <span>{quality === "default" ? "默认质量" : "降级质量"}</span>
-        </div>
-      </header>
-
-      <nav className="state-nav" aria-label="体验状态">
-        {(Object.keys(stateLabels) as ExperienceState[]).map((state) => (
-          <button
-            key={state}
-            type="button"
-            className={view === state ? "is-active" : ""}
-            onClick={() => directTo(state)}
-          >
-            <span>{stateLabels[state]}</span>
-            <small>{state.replace("-", " / ")}</small>
-          </button>
-        ))}
-      </nav>
-
-      <section className="time-panel" aria-label="时间窗口与事件">
-        <div className="panel-heading">
-          <span>二十年窗口</span>
-          <strong>
-            {formatHistoricalYear(windowRange.startYear)}—
-            {formatHistoricalYear(windowRange.endYear)}
-          </strong>
-        </div>
-        <input
-          className="time-slider"
-          type="range"
-          min={-525}
-          max={-505}
-          step={1}
-          value={focusYear}
-          aria-label="观察窗口中心年份"
-          onChange={(event) => changeFocusYear(Number(event.target.value))}
-        />
-        <div className="timeline-ends" aria-hidden="true">
-          <span>源头 / 九天</span>
-          <span>今天 / 光海</span>
-        </div>
-        <div className="event-list">
-          {fixture.events.map((event) => (
-            <button
-              type="button"
-              key={event.id}
-              onClick={() => {
-                changeFocusYear(event.year);
-                directTo("slice");
-              }}
-            >
-              <i />
-              <span>{event.label}</span>
-              <small>{formatHistoricalYear(event.year)}</small>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <aside className="detail-panel" aria-live="polite">
-        <p className="detail-state">{stateLabels[view]}</p>
-        <h2>{view === "relation-focus" ? selectedRelation.label : selectedPerson.label}</h2>
-        <p className="detail-summary">
-          {view === "relation-focus"
-            ? `${relationSource?.label ?? "来源"} → ${relationTarget?.label ?? "后继"}`
-            : selectedPerson.role}
-        </p>
-
-        {view === "relation-focus" ? (
-          <div className="evidence-card">
-            <span>关系证据</span>
-            <strong>
-              {selectedRelation.kind === "direct"
-                ? "明确传递"
-                : selectedRelation.kind === "documented-indirect"
-                  ? "有文献支持的间接影响"
-                  : "后世学术推断"}
-            </strong>
-            <p>视觉线型表示证据性质，不等同于“历史真伪”的绝对等级。</p>
-          </div>
-        ) : (
-          <>
-            <p className="life-range">
-              {formatHistoricalYear(selectedPerson.birthYear)}—
-              {formatHistoricalYear(selectedPerson.deathYear)}
-            </p>
-            <div className="influence-readout">
-              <span>{dimensionLabels[dimension]}影响</span>
-              <b>
-                {Math.round(
-                  influenceAt(selectedPerson, focusYear, dimension) * 100,
-                )}
-              </b>
-              <em>%</em>
-            </div>
-          </>
-        )}
-
-        <div className="relation-list" aria-label="思想关系">
-          {fixture.relations.map((relation) => (
-            <button
-              key={relation.id}
-              type="button"
-              className={selectedRelationId === relation.id ? "is-active" : ""}
-              onClick={() => selectRelation(relation.id)}
-            >
-              <span className={`relation-mark ${relation.kind}`} />
-              {relation.label}
-            </button>
-          ))}
-        </div>
-      </aside>
-
-      <section className="control-dock" aria-label="观察维度与辅助设置">
-        <div className="dimension-controls">
-          {(Object.keys(dimensionLabels) as InfluenceDimension[]).map((item) => (
-            <button
-              type="button"
-              key={item}
-              className={dimension === item ? "is-active" : ""}
-              onClick={() => changeDimension(item)}
-            >
-              {dimensionLabels[item]}
-            </button>
-          ))}
-        </div>
-        <div className="utility-controls">
-          <button type="button" onClick={guidePlaying ? stopGuide : startGuide}>
-            {guidePlaying ? "暂停导览" : "重播导览"}
-          </button>
-          <button type="button" onClick={toggleSound}>
-            {soundOn ? "声音开启" : "声音关闭"}
-          </button>
-          <button type="button" onClick={toggleLowMotion}>
-            {lowMotion ? "低动态" : "标准动态"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setQuality(quality === "default" ? "reduced" : "default")}
-          >
-            {quality === "default" ? "切换降级" : "恢复默认"}
-          </button>
-        </div>
-      </section>
-
-      <div className="scene-caption">
-        <p>{stateNotes[view]}</p>
-        <span>
-          {guidePlaying
-            ? `导览 ${Math.min(75, Math.round(guideSeconds))} / 75 秒`
-            : hoveredPersonId
-              ? `悬停：${fixture.persons.find((person) => person.id === hoveredPersonId)?.label}`
-              : "拖动接管镜头 · Esc 返回全史 · 空格重播导览"}
-        </span>
-      </div>
-
-      <div className="visual-legend" aria-label="视觉图例">
-        <span><i className="person-thread" />人物丝线 · 粗细/辉光=影响力</span>
-        <span><i className="focus-node" />焦点年份节点</span>
-        <span><i className="thought-thread" />思想丝线</span>
-        <span><i className="event-cloud" />事件聚集</span>
-      </div>
-
-      <footer className="metrics-bar">
-        <span>SEED {fixture.seed}</span>
-        <span>WEBGL · {quality.toUpperCase()}</span>
-        <span>MED {stats.medianMs.toFixed(1)} ms</span>
-        <span>P95 {stats.p95Ms.toFixed(1)} ms</span>
-        <span>CALLS {stats.calls}</span>
-        <span>POINTS {stats.points.toLocaleString()}</span>
-        <span>LINES {stats.lines.toLocaleString()}</span>
-        <span>{formatHistoricalYear(CONTENT_END_YEAR)} 内容边界</span>
-      </footer>
     </main>
   );
 }

@@ -33,10 +33,10 @@ test("server-renders the HistoryRiver prototype shell", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>落九川｜交互原型<\/title>/i);
-  assert.match(html, /落九川/);
-  assert.match(html, /原型 · 模拟数据/);
-  assert.match(html, /二十年窗口/);
-  assert.match(html, /观河/);
+  assert.match(html, /<main class="history-shell">/);
+  assert.match(html, /class="history-stage"/);
+  assert.match(html, /class="history-vignette"/);
+  assert.doesNotMatch(html, /原型 · 模拟数据|二十年窗口|观河/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 

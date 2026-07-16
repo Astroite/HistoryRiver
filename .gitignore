@@ -38,6 +38,7 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/temp/
 
 # code intelligence index (tool-generated)
 /.codegraph/
