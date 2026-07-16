@@ -3,7 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const templateRoot = new URL("../", import.meta.url);
-const previewRoot = new URL("../app/_sites-preview/", import.meta.url);
+const previewRoot = new URL("../src/app/_sites-preview/", import.meta.url);
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -42,8 +42,8 @@ test("server-renders the HistoryRiver prototype shell", async () => {
 
 test("removes all disposable starter metadata and preview code", async () => {
   const [page, layout, packageJson] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
@@ -56,5 +56,5 @@ test("removes all disposable starter metadata and preview code", async () => {
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 
   await assert.rejects(access(previewRoot));
-  await access(new URL("app/history-river.tsx", templateRoot));
+  await access(new URL("src/app/history-river.tsx", templateRoot));
 });

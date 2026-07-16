@@ -9,7 +9,7 @@ import {
   personPositionAt,
   prototypeFixture,
   validateFixture,
-} from "../lib/history/model.ts";
+} from "../src/lib/history/model.ts";
 
 test("prototype fixture has stable identities and valid references", () => {
   assert.deepEqual(validateFixture(), []);
