@@ -7,6 +7,7 @@ import {
   geographyKeyframes,
   geographyProfileAt,
 } from "../src/lib/history/geography-volume.ts";
+import { OceanFlowField } from "../src/lib/history/ocean-flow-field.ts";
 import {
   activeCurveAt,
   buildFigureThreads,
@@ -232,4 +233,54 @@ test("geography volume stacks exactly one horizontal contour per integer year", 
   assert.equal(volume.sliceYears[0], -3);
   assert.equal(volume.sliceYears.at(-1), 3);
   assert.ok(volume.longitudinalSegmentCount > 0);
+});
+
+const oceanField = new OceanFlowField({
+  bounds: { minX: -514, maxX: 526, minZ: -360, maxZ: 440 },
+  columns: 161,
+  rows: 129,
+  mouthX: 6,
+  mouthZ: 4,
+  seed: 1729,
+});
+
+test("ocean flow field stores a normalized vector and density at every cell", () => {
+  assert.equal(oceanField.potential.length, 161 * 129);
+  assert.equal(oceanField.velocity.length, 161 * 129 * 2);
+  assert.equal(oceanField.density.length, 161 * 129);
+  for (const [x, z] of [[6, 4], [-194, 80], [206, 80]] as const) {
+    const sample = oceanField.sample(x, z);
+    assert.ok(Math.abs(Math.hypot(sample.vx, sample.vz) - 1) < 1e-6);
+    assert.ok(sample.density >= 0.5 && sample.density <= 1);
+  }
+});
+
+test("ocean field opens the estuary before joining lateral currents", () => {
+  const center = oceanField.sample(6, 4);
+  const leftMouth = oceanField.sample(-26, 12);
+  const rightMouth = oceanField.sample(38, 12);
+  const leftSea = oceanField.sample(-194, 80);
+  const rightSea = oceanField.sample(206, 80);
+  assert.ok(center.vz > 0.95);
+  assert.ok(leftMouth.vx < -0.5 && leftMouth.vz > 0.5);
+  assert.ok(rightMouth.vx > 0.5 && rightMouth.vz > 0.5);
+  assert.ok(leftSea.vx < -0.95);
+  assert.ok(rightSea.vx > 0.95);
+});
+
+test("ocean streamlines remain bounded and follow the sampled field", () => {
+  const path = oceanField.trace(38, 12, { maxDistance: 220, step: 3.6 });
+  assert.ok(path.length > 50);
+  assert.ok(path.at(-1)!.x > 220);
+  assert.ok(path.every((point) => oceanField.contains(point.x, point.z)));
+  for (let index = 0; index < path.length - 1; index += 8) {
+    const point = path[index];
+    const next = path[index + 1];
+    const sample = oceanField.sample(point.x, point.z);
+    const segmentLength = Math.hypot(next.x - point.x, next.z - point.z);
+    const alignment = (
+      (next.x - point.x) * sample.vx + (next.z - point.z) * sample.vz
+    ) / segmentLength;
+    assert.ok(alignment > 0.99);
+  }
 });

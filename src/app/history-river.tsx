@@ -89,7 +89,6 @@ export function HistoryRiver() {
   const guidePlayingRef = useRef(true);
   const guideEpochRef = useRef(0);
   const lowMotionRef = useRef(false);
-  const quality = "default" as const;
 
   const stopGuide = useCallback(() => {
     guidePlayingRef.current = false;
@@ -161,6 +160,14 @@ export function HistoryRiver() {
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
+
+    const deviceMemory = (navigator as Navigator & { deviceMemory?: number })
+      .deviceMemory ?? 8;
+    const quality = navigator.hardwareConcurrency <= 4
+      || deviceMemory <= 4
+      || (window.innerWidth <= 520 && window.devicePixelRatio > 1.5)
+      ? "reduced"
+      : "default";
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x02070b);
@@ -822,7 +829,7 @@ export function HistoryRiver() {
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [fixture, quality, selectPerson, selectRelation, stopGuide]);
+  }, [fixture, selectPerson, selectRelation, stopGuide]);
 
   return (
     <main className="history-shell">

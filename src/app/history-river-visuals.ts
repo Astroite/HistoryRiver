@@ -4,6 +4,10 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 
+import {
+  OceanFlowField,
+  type OceanFlowPoint,
+} from "@/lib/history/ocean-flow-field";
 import type { ExperienceState } from "@/lib/history/model";
 
 type SceneQuality = "default" | "reduced";
@@ -532,8 +536,9 @@ function createWaterfallParticles(
 function createConfluenceFlows(
   random: () => number,
   quality: SceneQuality,
+  flowField: OceanFlowField,
 ): { object: THREE.LineSegments; material: THREE.ShaderMaterial } {
-  const bundleCount = quality === "default" ? 22 : 14;
+  const bundleCount = quality === "default" ? 32 : 20;
   const strandCount = quality === "default" ? 3 : 2;
   const positions: number[] = [];
   const progresses: number[] = [];
@@ -544,12 +549,7 @@ function createConfluenceFlows(
   for (let bundle = 0; bundle < bundleCount; bundle += 1) {
     const lane = THREE.MathUtils.lerp(-0.94, 0.94, bundle / (bundleCount - 1))
       + Math.sin(bundle * 1.73) * 0.014;
-    const angle = Math.PI / 2 - lane * 0.54;
-    const phase = random() * Math.PI * 2;
-    const length = 82 + Math.pow(random(), 0.72) * 148;
-    const bend = (random() - 0.5) * 0.08;
-    const meander = 0.45 + random() * 0.75;
-    const steps = quality === "default" ? 48 : 30;
+    const length = 94 + Math.pow(random(), 0.72) * 156;
     const brightness = 0.48 + random() * 0.48 + (random() < 0.08 ? 0.3 : 0);
     const flowSeed = random();
     const flowSpeed = 0.72 + random() * 0.62;
@@ -559,43 +559,30 @@ function createConfluenceFlows(
       const mouthLane = lane + strandOffset * 0.018;
       const startX = WATERFALL_CENTER_X + mouthLane * 31.5;
       const startZ = CONFLUENCE_CENTER_Z + 8.5 - Math.abs(mouthLane) * 2.8;
-      const strandAngle = angle - strandOffset * 0.006;
-      const targetAngle = mouthLane < 0 ? Math.PI : 0;
       const strandLength = length * (1 + strandOffset * 0.012);
       const strandBright = brightness * (0.88 + strand * 0.06);
       const strandSeed = flowSeed + strandOffset * 0.025;
+      const path = flowField.trace(startX, startZ, {
+        maxDistance: strandLength,
+        step: quality === "default" ? 3.2 : 4.8,
+      });
 
-      let previousX = startX;
-      let previousZ = startZ;
-      let previousProgress = 0;
-      let previousWob = Math.sin(phase) * meander;
-
-      for (let step = 1; step <= steps; step += 1) {
-        const progress = step / steps;
-        const turn = smoothstep(0.08, 0.88, progress);
-        const theta = THREE.MathUtils.lerp(strandAngle, targetAngle, turn)
-          + Math.sin(progress * Math.PI) * bend;
-        const along = strandLength / steps * (0.76 + progress * 0.24);
-        const wob = Math.sin(progress * Math.PI * 2.8 + phase) * meander;
-        const sideways = wob - previousWob;
-        const x = previousX + Math.cos(theta) * along - Math.sin(theta) * sideways;
-        const z = previousZ + Math.sin(theta) * along + Math.cos(theta) * sideways;
+      for (let index = 0; index < path.length - 1; index += 1) {
+        const start = path[index];
+        const end = path[index + 1];
+        const progress = end.distance / strandLength;
         positions.push(
-          previousX,
+          start.x,
           SEA_BASE_Y + 0.32,
-          previousZ,
-          x,
+          start.z,
+          end.x,
           SEA_BASE_Y + 0.32,
-          z,
+          end.z,
         );
-        progresses.push(previousProgress, progress);
+        progresses.push(start.distance / strandLength, progress);
         brights.push(strandBright, strandBright);
         seeds.push(strandSeed, strandSeed);
         speeds.push(flowSpeed, flowSpeed);
-        previousX = x;
-        previousZ = z;
-        previousProgress = progress;
-        previousWob = wob;
       }
     }
   }
@@ -706,59 +693,49 @@ function createConfluenceFlows(
 function createFlowingOcean(
   random: () => number,
   quality: SceneQuality,
+  flowField: OceanFlowField,
 ): { object: THREE.LineSegments; material: THREE.ShaderMaterial } {
-  // 海洋先由少量共享主流线建立整体潮向，再沿法向派生平行短丝束。
-  // 方向只来自连续低频流场，随机数不再逐段控制转向，因此相邻流带保持顺序而不会盘根错节。
-  const ribbonCount = quality === "default" ? 104 : 58;
-  const stepLength = quality === "default" ? 4 : 6;
-  const xMin = WATERFALL_CENTER_X - SEA_X_HALF;
-  const width = SEA_X_HALF * 2;
+  const masterRowCount = quality === "default" ? 176 : 96;
+  const detailColumns = quality === "default" ? 88 : 50;
+  const detailRows = quality === "default" ? 70 : 40;
+  const traceStep = quality === "default" ? 3.6 : 5.4;
+  const xMin = flowField.bounds.minX;
+  const width = flowField.bounds.maxX - flowField.bounds.minX;
   const zRange = SEA_Z_MAX - SEA_Z_MIN;
 
   const positions: number[] = [];
   const brights: number[] = [];
   const depths: number[] = [];
-  const layers: number[] = []; // 0 = 远景主流带，1 = 中景家族短丝束
+  const layers: number[] = [];
   const flowCoords: number[] = [];
   const flowSeeds: number[] = [];
 
-  interface FlowPoint {
-    x: number;
-    z: number;
-    slope: number;
-    distance: number;
-  }
-
-  const currentSlope = (x: number, z: number): number => {
-    const longTide = Math.sin(x * 0.0085 + z * 0.0032) * 0.052;
-    const crossTide = Math.sin(z * 0.011 - x * 0.0024 + 1.2) * 0.032;
-    const mouthX = (x - WATERFALL_CENTER_X) / 126;
-    const mouthZ = (z - CONFLUENCE_CENTER_Z) / 104;
-    const mouthInfluence = Math.exp(-(mouthX * mouthX + mouthZ * mouthZ));
-    return THREE.MathUtils.clamp(
-      longTide + crossTide + mouthInfluence * 0.31,
-      -0.16,
-      0.38,
-    );
-  };
-
-  const offsetPoint = (point: FlowPoint, offset: number, depth: number) => {
-    const normalLength = Math.hypot(point.slope, 1);
+  const offsetPoint = (point: OceanFlowPoint, offset: number, depth: number) => {
+    if (offset === 0) {
+      return {
+        x: point.x,
+        y: SEA_BASE_Y - depth * SEA_DEPTH_BELOW,
+        z: point.z,
+      };
+    }
+    const flow = flowField.sample(point.x, point.z);
     return {
-      x: point.x - point.slope / normalLength * offset,
+      x: point.x - flow.vz * offset,
       y: SEA_BASE_Y - depth * SEA_DEPTH_BELOW,
-      z: point.z + offset / normalLength,
+      z: point.z + flow.vx * offset,
     };
   };
 
   const appendSegment = (
-    start: FlowPoint,
-    end: FlowPoint,
+    start: OceanFlowPoint,
+    end: OceanFlowPoint,
     offset: number,
     depth: number,
     bright: number,
     layer: number,
     seed: number,
+    startCoord: number,
+    endCoord: number,
   ) => {
     const a = offsetPoint(start, offset, depth);
     const b = offsetPoint(end, offset, depth);
@@ -766,74 +743,95 @@ function createFlowingOcean(
     brights.push(bright, bright);
     depths.push(depth, depth);
     layers.push(layer, layer);
-    flowCoords.push(start.distance / 42, end.distance / 42);
+    flowCoords.push(startCoord, endCoord);
     flowSeeds.push(seed, seed);
   };
 
-  for (let ribbon = 0; ribbon < ribbonCount; ribbon += 1) {
-    const seedZ = SEA_Z_MIN
-      + (ribbon + 0.5) / ribbonCount * zRange
-      + Math.sin(ribbon * 1.71) * 1.35;
-    const centerline: FlowPoint[] = [];
-    let x = xMin - stepLength * 2;
-    let z = seedZ;
+  const appendPath = (
+    path: OceanFlowPoint[],
+    offset: number,
+    depth: number,
+    bright: number,
+    layer: number,
+    seed: number,
+  ) => {
     let distance = 0;
-    while (x <= xMin + width + stepLength * 2) {
-      const slope = currentSlope(x, z);
-      centerline.push({ x, z, slope, distance });
-      const nextX = x + stepLength;
-      const nextSlope = currentSlope(nextX, z + slope * stepLength);
-      z += (slope + nextSlope) * 0.5 * stepLength;
-      x = nextX;
-      distance += stepLength * Math.hypot(1, (slope + nextSlope) * 0.5);
-    }
-
-    // 第一层：每条主流线只留一根低亮长线，负责远景秩序和潮汐尺度。
-    const baseDepth = random() < 0.12
-      ? 0.045 + random() * 0.09
-      : random() * 0.025;
-    const baseBright = 0.27 + random() * 0.26;
-    const baseSeed = random();
-    for (let index = 0; index < centerline.length - 1; index += 1) {
+    for (let index = 0; index < path.length - 1; index += 1) {
+      const segmentLength = Math.hypot(
+        path[index + 1].x - path[index].x,
+        path[index + 1].z - path[index].z,
+      );
       appendSegment(
-        centerline[index],
-        centerline[index + 1],
+        path[index],
+        path[index + 1],
+        offset,
+        depth,
+        bright,
+        layer,
+        seed,
+        distance / 42,
+        (distance + segmentLength) / 42,
+      );
+      distance += segmentLength;
+    }
+  };
+
+  // Sparse full-length streamlines reveal the large-scale current without making a net.
+  for (let row = 0; row < masterRowCount; row += 1) {
+    const seedZ = SEA_Z_MIN
+      + (row + 0.5) / masterRowCount * zRange
+      + (random() - 0.5) * zRange / masterRowCount * 0.45;
+    for (const side of [-1, 1] as const) {
+      const seedX = WATERFALL_CENTER_X + side * (7 + random() * 3.5);
+      const path = flowField.trace(seedX, seedZ, {
+        maxDistance: SEA_X_HALF + 92,
+        step: traceStep,
+      });
+      const sample = flowField.sample(seedX, seedZ);
+      const baseDepth = random() < 0.08 ? 0.035 + random() * 0.06 : random() * 0.014;
+      appendPath(
+        path,
         0,
         baseDepth,
-        baseBright,
+        0.22 + sample.density * 0.24 + random() * 0.11,
         0,
-        baseSeed,
+        random(),
       );
     }
+  }
 
-    // 第二层：隔带生成三根平行短丝，长度仍对应一段人生，但共享同一条家族主流线。
-    if (ribbon % 2 !== 0) continue;
-    const strandCount = quality === "default" ? 3 : 2;
-    for (let strand = 0; strand < strandCount; strand += 1) {
-      const offset = (strand - (strandCount - 1) / 2) * 0.9;
-      const strokeLength = THREE.MathUtils.lerp(
+  // Thousands of short, stratified traces provide fiber density. Every segment is
+  // integrated through the same field, so added density does not add random crossings.
+  for (let row = 0; row < detailRows; row += 1) {
+    for (let column = 0; column < detailColumns; column += 1) {
+      const seedX = xMin + (column + 0.18 + random() * 0.64) / detailColumns * width;
+      const seedZ = SEA_Z_MIN
+        + (row + 0.18 + random() * 0.64) / detailRows * zRange;
+      const flow = flowField.sample(seedX, seedZ);
+      if (random() > 0.72 + flow.density * 0.28) continue;
+      const length = THREE.MathUtils.lerp(
         SEA_THREAD_LEN_MIN,
         SEA_THREAD_LEN_MAX,
         random(),
       );
-      const strokeSteps = Math.max(2, Math.round(strokeLength / stepLength));
-      const gapSteps = 2 + Math.floor(random() * 4);
-      const cycleSteps = strokeSteps + gapSteps;
-      const cycleOffset = Math.floor(random() * cycleSteps);
-      const depth = random() * 0.018;
-      const bright = 0.48 + random() * 0.4 + (random() < 0.08 ? 0.32 : 0);
+      const backwardLength = length * (0.38 + random() * 0.24);
+      const backward = flowField.trace(seedX, seedZ, {
+        direction: -1,
+        maxDistance: backwardLength,
+        step: traceStep * 0.72,
+      });
+      const forward = flowField.trace(seedX, seedZ, {
+        maxDistance: length - backwardLength,
+        step: traceStep * 0.72,
+      });
+      const path = [...backward.reverse(), ...forward.slice(1)];
+      const familySize = random() < 0.16 ? 2 : 1;
+      const depth = random() < 0.1 ? 0.018 + random() * 0.07 : random() * 0.012;
+      const bright = 0.45 + flow.density * 0.34 + random() * 0.28;
       const seed = random();
-      for (let index = 0; index < centerline.length - 1; index += 1) {
-        if ((index + cycleOffset) % cycleSteps >= strokeSteps) continue;
-        appendSegment(
-          centerline[index],
-          centerline[index + 1],
-          offset,
-          depth,
-          bright,
-          1,
-          seed,
-        );
+      for (let strand = 0; strand < familySize; strand += 1) {
+        const offset = familySize === 1 ? 0 : (strand - 0.5) * 0.72;
+        appendPath(path, offset, depth, bright * (0.94 + strand * 0.06), 1, seed);
       }
     }
   }
@@ -851,7 +849,7 @@ function createFlowingOcean(
       uTime: { value: 0 },
       uFlow: { value: 1 },
       uAmp: { value: 1 },
-      uOpacity: { value: 0.22 },
+      uOpacity: { value: 0.24 },
       // 金色光海：谷底深金、脊面亮金、波峰近乎白金；沉入未来时转为冷暗。
       uNear: { value: new THREE.Color(0xffd98a) },
       uFar: { value: new THREE.Color(0xb07f2e) },
@@ -963,6 +961,7 @@ function createFlowingOcean(
 function createSeaFoam(
   random: () => number,
   quality: SceneQuality,
+  flowField: OceanFlowField,
 ): { object: THREE.Points; material: THREE.ShaderMaterial } {
   const count = quality === "default" ? 26000 : 10000;
   const xMin = WATERFALL_CENTER_X - SEA_X_HALF;
@@ -970,19 +969,30 @@ function createSeaFoam(
   const zRange = SEA_Z_MAX - SEA_Z_MIN;
   const positions = new Float32Array(count * 3);
   const brights = new Float32Array(count);
+  const flowVectors = new Float32Array(count * 2);
   const drips = new Float32Array(count); // 0 = 贴海面的金沙；>0 = 从波下垂落的光丝(下坠深度)
   for (let index = 0; index < count; index += 1) {
-    // 浪花铺满整片海面（表征当下的海面辉光），均匀散布并带轻微抖动。
-    positions[index * 3] = xMin + width * random();
+    let x = xMin + width * random();
+    let z = SEA_Z_MIN + zRange * random();
+    let flow = flowField.sample(x, z);
+    while (random() > 0.36 + flow.density * 0.64) {
+      x = xMin + width * random();
+      z = SEA_Z_MIN + zRange * random();
+      flow = flowField.sample(x, z);
+    }
+    positions[index * 3] = x;
     positions[index * 3 + 1] = SEA_BASE_Y;
-    positions[index * 3 + 2] = SEA_Z_MIN + zRange * random();
-    brights[index] = 0.5 + random() * 1.15;
+    positions[index * 3 + 2] = z;
+    brights[index] = 0.42 + flow.density * 0.48 + random() * 0.78;
+    flowVectors[index * 2] = flow.vx;
+    flowVectors[index * 2 + 1] = flow.vz;
     // 极少量短垂光保留海面纵深，不再形成大面积根系状悬丝。
     drips[index] = random() < 0.045 ? Math.pow(random(), 1.7) * 22 : 0;
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute("aBright", new THREE.BufferAttribute(brights, 1));
+  geometry.setAttribute("aFlow", new THREE.BufferAttribute(flowVectors, 2));
   geometry.setAttribute("aDrip", new THREE.BufferAttribute(drips, 1));
 
   const material = new THREE.ShaderMaterial({
@@ -1002,6 +1012,7 @@ function createSeaFoam(
     vertexShader: `
       attribute float aBright;
       attribute float aDrip;
+      attribute vec2 aFlow;
 
       uniform float uTime;
       uniform float uFlow;
@@ -1021,6 +1032,10 @@ function createSeaFoam(
 
       void main() {
         vec3 p = position;
+        float tangentDrift = sin(
+          uTime * 0.00032 * uFlow + position.x * 0.021 + position.z * 0.013
+        ) * 0.72;
+        p.xz += aFlow * tangentDrift;
         // 与丝线海共用三维波面轨道，浪花随波滚动流淌。
         vec3 disp = oceanDisplace(p.xz);
         p += disp;
@@ -1203,9 +1218,22 @@ export function createHistoryVisuals(options: {
   const clouds = createClouds(random, cloudTexture, topY, quality);
   root.add(clouds.group);
 
-  const flowingOcean = createFlowingOcean(random, quality);
-  const confluenceFlows = createConfluenceFlows(random, quality);
-  const seaFoam = createSeaFoam(random, quality);
+  const oceanFlowField = new OceanFlowField({
+    bounds: {
+      minX: WATERFALL_CENTER_X - SEA_X_HALF,
+      maxX: WATERFALL_CENTER_X + SEA_X_HALF,
+      minZ: SEA_Z_MIN,
+      maxZ: SEA_Z_MAX,
+    },
+    columns: quality === "default" ? 161 : 105,
+    rows: quality === "default" ? 129 : 81,
+    mouthX: WATERFALL_CENTER_X,
+    mouthZ: CONFLUENCE_CENTER_Z,
+    seed,
+  });
+  const flowingOcean = createFlowingOcean(random, quality, oceanFlowField);
+  const confluenceFlows = createConfluenceFlows(random, quality, oceanFlowField);
+  const seaFoam = createSeaFoam(random, quality, oceanFlowField);
   root.add(flowingOcean.object, confluenceFlows.object, seaFoam.object);
 
   const waterfallFibers = createWaterfallFibers(random, topY, quality);
