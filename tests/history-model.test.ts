@@ -284,3 +284,44 @@ test("ocean streamlines remain bounded and follow the sampled field", () => {
     assert.ok(alignment > 0.99);
   }
 });
+
+test("ocean potential advances coherently along left, right, and distant currents", () => {
+  const seeds = [
+    [-26, 12],
+    [38, 12],
+    [-194, 80],
+    [206, 80],
+  ] as const;
+
+  for (const [x, z] of seeds) {
+    const path = oceanField.trace(x, z, { maxDistance: 260, step: 3.6 });
+    assert.ok(path.length > 20);
+    let advancingSteps = 0;
+    for (let index = 0; index < path.length - 1; index += 1) {
+      if (path[index + 1].potential >= path[index].potential - 0.02) {
+        advancingSteps += 1;
+      }
+    }
+    assert.ok(advancingSteps / (path.length - 1) >= 0.98);
+    assert.ok(path.at(-1)!.potential > path[0].potential + 120);
+  }
+});
+
+test("ocean flow field generation is deterministic for a fixed seed", () => {
+  const duplicate = new OceanFlowField({
+    bounds: { minX: -514, maxX: 526, minZ: -360, maxZ: 440 },
+    columns: 161,
+    rows: 129,
+    mouthX: 6,
+    mouthZ: 4,
+    seed: 1729,
+  });
+
+  assert.deepEqual(duplicate.potential, oceanField.potential);
+  assert.deepEqual(duplicate.velocity, oceanField.velocity);
+  assert.deepEqual(duplicate.density, oceanField.density);
+  assert.deepEqual(
+    duplicate.trace(38, 12, { maxDistance: 220, step: 3.6 }),
+    oceanField.trace(38, 12, { maxDistance: 220, step: 3.6 }),
+  );
+});

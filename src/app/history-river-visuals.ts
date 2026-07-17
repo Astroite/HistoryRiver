@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 
 import {
@@ -22,6 +23,7 @@ interface CloudSpriteState {
 export interface HistoryVisualRig {
   root: THREE.Group;
   update(now: number, view: ExperienceState, lowMotion: boolean): void;
+  resize(width: number, height: number, pixelRatio: number): void;
   dispose(): void;
 }
 
@@ -33,6 +35,9 @@ export interface HistoryPostProcessing {
 
 const WATERFALL_CENTER_X = 6;
 const CONFLUENCE_CENTER_Z = 4;
+const OCEAN_BLOOM_LAYER = 1;
+const OCEAN_TIDE_WAVELENGTH = 170;
+const OCEAN_TIDE_PERIOD_MS = 6500;
 const CELESTIAL = new THREE.Color(0x9ebbd5);
 const IVORY = new THREE.Color(0xffdda8);
 const MEMORY_GOLD = new THREE.Color(0xe99b38);
@@ -89,7 +94,7 @@ const CONFLUENCE_RIPPLE = {
   far: 210,
 } as const;
 
-const OCEAN_HEIGHT_GLSL = `
+const OCEAN_SURFACE_GLSL = `
   // 单个 Gerstner 波，返回三维位移 (dx, dy, dz)。dir 需已归一化。
   vec3 gerstnerWave(vec2 q, vec2 dir, float wavelength, float amp, float steep, float w) {
     float t = uTime * 0.00035 * uFlow;
@@ -98,6 +103,14 @@ const OCEAN_HEIGHT_GLSL = `
     float cf = cos(f);
     float sf = sin(f);
     return vec3(dir.x * steep * amp * cf, amp * sf, dir.y * steep * amp * cf);
+  }
+
+  // 解析高度梯度。所有海面材质共享该法线来源，避免用额外波面采样近似。
+  vec2 gerstnerSlope(vec2 q, vec2 dir, float wavelength, float amp, float w) {
+    float t = uTime * 0.00035 * uFlow;
+    float k = 6.2831853 / wavelength;
+    float f = k * dot(dir, q) - w * t;
+    return dir * (amp * k * cos(f));
   }
 
   // 合成波面位移。振幅合计约 ±20；水平轨道使波面滚动流动。
@@ -122,6 +135,40 @@ ${OCEAN_WAVES.map(
       impactDir.y * ${CONFLUENCE_RIPPLE.steep.toFixed(2)} * ${CONFLUENCE_RIPPLE.amp.toFixed(2)} * cos(impactPhase)
     ) * impactEnvelope;
     return d * uAmp;
+  }
+
+  vec2 oceanSlope(vec2 q) {
+    vec2 slope = vec2(0.0);
+${OCEAN_WAVES.map(
+  (w) =>
+    `    slope += gerstnerSlope(q, vec2(${w.dir[0].toFixed(5)}, ${w.dir[1].toFixed(5)}), ${w.wavelength.toFixed(1)}, ${w.amp.toFixed(2)}, ${w.speed.toFixed(2)});`,
+).join("\n")}
+    vec2 impactOffset = q - vec2(${WATERFALL_CENTER_X.toFixed(1)}, ${CONFLUENCE_CENTER_Z.toFixed(1)});
+    float impactDistance = length(impactOffset);
+    vec2 impactDir = impactOffset / max(impactDistance, 0.001);
+    float impactEnvelope = smoothstep(${CONFLUENCE_RIPPLE.near.toFixed(1)}, ${(CONFLUENCE_RIPPLE.near + 10).toFixed(1)}, impactDistance)
+      * (1.0 - smoothstep(${(CONFLUENCE_RIPPLE.far - 55).toFixed(1)}, ${CONFLUENCE_RIPPLE.far.toFixed(1)}, impactDistance));
+    float impactK = 6.2831853 / ${CONFLUENCE_RIPPLE.wavelength.toFixed(1)};
+    float impactT = uTime * 0.00035 * uFlow;
+    float impactPhase = impactK * impactDistance - ${CONFLUENCE_RIPPLE.speed.toFixed(2)} * impactT;
+    slope += impactDir
+      * (${CONFLUENCE_RIPPLE.amp.toFixed(2)} * impactK * cos(impactPhase))
+      * impactEnvelope;
+    return slope * uAmp;
+  }
+
+  vec3 oceanNormal(vec2 q) {
+    vec2 slope = oceanSlope(q);
+    return normalize(vec3(-slope.x, 1.0, -slope.y));
+  }
+
+  float oceanTide(float potential) {
+    float phase = fract(
+      potential / ${OCEAN_TIDE_WAVELENGTH.toFixed(1)}
+      - uTime / ${OCEAN_TIDE_PERIOD_MS.toFixed(1)} * uFlow
+    );
+    return smoothstep(0.0, 0.12, phase)
+      * (1.0 - smoothstep(0.12, 0.42, phase));
   }
 
   float oceanHeight(vec2 q) { return oceanDisplace(q).y; }
@@ -543,17 +590,13 @@ function createConfluenceFlows(
   const positions: number[] = [];
   const progresses: number[] = [];
   const brights: number[] = [];
-  const seeds: number[] = [];
-  const speeds: number[] = [];
+  const potentials: number[] = [];
 
   for (let bundle = 0; bundle < bundleCount; bundle += 1) {
     const lane = THREE.MathUtils.lerp(-0.94, 0.94, bundle / (bundleCount - 1))
       + Math.sin(bundle * 1.73) * 0.014;
     const length = 94 + Math.pow(random(), 0.72) * 156;
     const brightness = 0.48 + random() * 0.48 + (random() < 0.08 ? 0.3 : 0);
-    const flowSeed = random();
-    const flowSpeed = 0.72 + random() * 0.62;
-
     for (let strand = 0; strand < strandCount; strand += 1) {
       const strandOffset = strand - (strandCount - 1) / 2;
       const mouthLane = lane + strandOffset * 0.018;
@@ -561,7 +604,6 @@ function createConfluenceFlows(
       const startZ = CONFLUENCE_CENTER_Z + 8.5 - Math.abs(mouthLane) * 2.8;
       const strandLength = length * (1 + strandOffset * 0.012);
       const strandBright = brightness * (0.88 + strand * 0.06);
-      const strandSeed = flowSeed + strandOffset * 0.025;
       const path = flowField.trace(startX, startZ, {
         maxDistance: strandLength,
         step: quality === "default" ? 3.2 : 4.8,
@@ -581,8 +623,7 @@ function createConfluenceFlows(
         );
         progresses.push(start.distance / strandLength, progress);
         brights.push(strandBright, strandBright);
-        seeds.push(strandSeed, strandSeed);
-        speeds.push(flowSpeed, flowSpeed);
+        potentials.push(start.potential, end.potential);
       }
     }
   }
@@ -591,8 +632,7 @@ function createConfluenceFlows(
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("aProgress", new THREE.Float32BufferAttribute(progresses, 1));
   geometry.setAttribute("aBright", new THREE.Float32BufferAttribute(brights, 1));
-  geometry.setAttribute("aSeed", new THREE.Float32BufferAttribute(seeds, 1));
-  geometry.setAttribute("aSpeed", new THREE.Float32BufferAttribute(speeds, 1));
+  geometry.setAttribute("aPotential", new THREE.Float32BufferAttribute(potentials, 1));
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -603,13 +643,14 @@ function createConfluenceFlows(
       uCore: { value: new THREE.Color(0xffdca2) },
       uFlowColor: { value: new THREE.Color(0xd99738) },
       uCrest: { value: new THREE.Color(0xfffaea) },
+      uValley: { value: new THREE.Color(0x364868) },
+      uFresnel: { value: new THREE.Color(0x7b8db7) },
       uFade: { value: new THREE.Vector2(SEA_FADE_NEAR, SEA_FADE_FAR) },
     },
     vertexShader: `
       attribute float aProgress;
       attribute float aBright;
-      attribute float aSeed;
-      attribute float aSpeed;
+      attribute float aPotential;
 
       uniform float uTime;
       uniform float uFlow;
@@ -618,29 +659,41 @@ function createConfluenceFlows(
       uniform vec3 uCore;
       uniform vec3 uFlowColor;
       uniform vec3 uCrest;
+      uniform vec3 uValley;
+      uniform vec3 uFresnel;
       uniform vec2 uFade;
 
       varying vec3 vColor;
       varying float vAlpha;
-      varying float vProgress;
-      varying float vSeed;
-      varying float vSpeed;
+      varying float vTide;
+      varying float vGlint;
 
-      ${OCEAN_HEIGHT_GLSL}
+      ${OCEAN_SURFACE_GLSL}
 
       void main() {
         vec3 p = position;
+        vec3 surfaceNormal = oceanNormal(p.xz);
         vec3 disp = oceanDisplace(p.xz);
         float oceanBlend = smoothstep(0.0, 0.18, aProgress);
         p += disp * oceanBlend;
 
         float crest = smoothstep(5.0, 17.0, disp.y * oceanBlend);
+        float valley = (1.0 - smoothstep(-5.0, 4.0, disp.y * oceanBlend)) * oceanBlend;
+        float tide = oceanTide(aPotential);
         float contactLight = 1.0 - smoothstep(0.02, 0.34, aProgress);
         vec3 base = mix(uCore, uFlowColor, smoothstep(0.04, 0.86, aProgress));
-        vColor = mix(base, uCrest, crest * 0.56 + contactLight * 0.12)
-          * (0.44 + aBright * 0.5);
 
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        vec3 normalView = normalize(normalMatrix * surfaceNormal);
+        vec3 viewDirection = normalize(-mv.xyz);
+        float fresnel = pow(1.0 - max(dot(normalView, viewDirection), 0.0), 3.0);
+        vec3 lightDirection = normalize(vec3(0.34, 0.82, 0.45));
+        float specular = pow(max(dot(reflect(-lightDirection, normalView), viewDirection), 0.0), 24.0);
+        vGlint = crest * tide * specular;
+        base = mix(base, uValley, valley * 0.18);
+        base = mix(base, uFresnel, fresnel * (1.0 - crest) * 0.12);
+        vColor = mix(base, uCrest, crest * 0.56 + contactLight * 0.12 + vGlint * 0.65)
+          * (0.44 + aBright * 0.5);
         float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, -mv.z);
         float entryFade = 0.42 + smoothstep(0.0, 0.09, aProgress) * 0.58;
         float reachFade = 1.0 - smoothstep(0.68, 1.0, aProgress);
@@ -650,33 +703,21 @@ function createConfluenceFlows(
           * (0.2 + reachFade * 0.8)
           * (0.62 + contactLight * 0.56)
           * min(aBright, 1.35);
-        vProgress = aProgress;
-        vSeed = aSeed;
-        vSpeed = aSpeed;
+        vTide = tide;
         gl_Position = projectionMatrix * mv;
       }
     `,
     fragmentShader: `
       varying vec3 vColor;
       varying float vAlpha;
-      varying float vProgress;
-      varying float vSeed;
-      varying float vSpeed;
-
-      uniform float uTime;
-      uniform float uFlow;
+      varying float vTide;
+      varying float vGlint;
 
       void main() {
         if (vAlpha <= 0.003) discard;
-        float phase = fract(
-          vProgress * (4.6 + vSeed * 1.8)
-          - uTime * 0.00016 * vSpeed * uFlow
-          + vSeed
-        );
-        float pulse = smoothstep(0.0, 0.05, phase)
-          * (1.0 - smoothstep(0.05, 0.2, phase));
-        vec3 color = mix(vColor, vec3(1.0, 0.95, 0.8), pulse * 0.58);
-        gl_FragColor = vec4(color, vAlpha * (0.7 + pulse * 1.25));
+        float energy = vTide * 0.5 + vGlint * 1.4;
+        vec3 color = mix(vColor, vec3(1.0, 0.96, 0.84), min(energy, 1.0) * 0.72);
+        gl_FragColor = vec4(color * (1.0 + vGlint * 1.2), vAlpha * (0.72 + energy));
       }
     `,
     transparent: true,
@@ -687,6 +728,229 @@ function createConfluenceFlows(
   const object = new THREE.LineSegments(geometry, material);
   object.renderOrder = 3;
   object.frustumCulled = false;
+  object.layers.enable(OCEAN_BLOOM_LAYER);
+  return { object, material };
+}
+
+interface OceanMasterPath {
+  path: OceanFlowPoint[];
+  depth: number;
+  bright: number;
+  hero: boolean;
+}
+
+function buildOceanMasterPaths(
+  random: () => number,
+  quality: SceneQuality,
+  flowField: OceanFlowField,
+): OceanMasterPath[] {
+  const masterRowCount = quality === "default" ? 176 : 96;
+  const traceStep = quality === "default" ? 3.6 : 5.4;
+  const zRange = SEA_Z_MAX - SEA_Z_MIN;
+  const paths: OceanMasterPath[] = [];
+
+  for (let row = 0; row < masterRowCount; row += 1) {
+    const seedZ = SEA_Z_MIN
+      + (row + 0.5) / masterRowCount * zRange
+      + (random() - 0.5) * zRange / masterRowCount * 0.45;
+    for (const side of [-1, 1] as const) {
+      const seedX = WATERFALL_CENTER_X + side * (7 + random() * 3.5);
+      const path = flowField.trace(seedX, seedZ, {
+        maxDistance: SEA_X_HALF + 92,
+        step: traceStep,
+      });
+      const sample = flowField.sample(seedX, seedZ);
+      const depth = random() < 0.08 ? 0.035 + random() * 0.06 : random() * 0.014;
+      paths.push({
+        path,
+        depth,
+        bright: 0.22 + sample.density * 0.24 + random() * 0.11,
+        // 左右两侧交错取样，约 8% 的主流线成为宽潮脊。
+        hero: row % 12 === (side === -1 ? 2 : 8),
+      });
+    }
+  }
+  return paths;
+}
+
+function createOceanCrestRibbons(
+  masterPaths: OceanMasterPath[],
+): { object: THREE.Mesh; material: THREE.ShaderMaterial } {
+  const positions: number[] = [];
+  const previous: number[] = [];
+  const next: number[] = [];
+  const sides: number[] = [];
+  const potentials: number[] = [];
+  const densities: number[] = [];
+  const brights: number[] = [];
+  const indices: number[] = [];
+
+  for (const master of masterPaths) {
+    if (!master.hero || master.path.length < 2) continue;
+    const vertexBase = positions.length / 3;
+    for (let index = 0; index < master.path.length; index += 1) {
+      const point = master.path[index];
+      const before = master.path[Math.max(0, index - 1)];
+      const after = master.path[Math.min(master.path.length - 1, index + 1)];
+      for (const side of [-1, 1] as const) {
+        positions.push(point.x, SEA_BASE_Y + 0.12, point.z);
+        previous.push(before.x, SEA_BASE_Y + 0.12, before.z);
+        next.push(after.x, SEA_BASE_Y + 0.12, after.z);
+        sides.push(side);
+        potentials.push(point.potential);
+        densities.push(point.density);
+        brights.push(master.bright);
+      }
+      if (index < master.path.length - 1) {
+        const offset = vertexBase + index * 2;
+        indices.push(offset, offset + 1, offset + 2, offset + 2, offset + 1, offset + 3);
+      }
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("aPrevious", new THREE.Float32BufferAttribute(previous, 3));
+  geometry.setAttribute("aNext", new THREE.Float32BufferAttribute(next, 3));
+  geometry.setAttribute("aSide", new THREE.Float32BufferAttribute(sides, 1));
+  geometry.setAttribute("aPotential", new THREE.Float32BufferAttribute(potentials, 1));
+  geometry.setAttribute("aDensity", new THREE.Float32BufferAttribute(densities, 1));
+  geometry.setAttribute("aBright", new THREE.Float32BufferAttribute(brights, 1));
+  geometry.setIndex(indices);
+
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uFlow: { value: 1 },
+      uAmp: { value: 1 },
+      uOpacity: { value: 0.5 },
+      uResolution: { value: new THREE.Vector2(1366, 768) },
+      uPixelRatio: { value: 1 },
+      uNear: { value: new THREE.Color(0xffd98a) },
+      uFar: { value: new THREE.Color(0xb07f2e) },
+      uCrest: { value: new THREE.Color(0xfff6dc) },
+      uValley: { value: new THREE.Color(0x364868) },
+      uFresnel: { value: new THREE.Color(0x7b8db7) },
+      uFade: { value: new THREE.Vector2(SEA_FADE_NEAR, SEA_FADE_FAR) },
+    },
+    vertexShader: `
+      attribute vec3 aPrevious;
+      attribute vec3 aNext;
+      attribute float aSide;
+      attribute float aPotential;
+      attribute float aDensity;
+      attribute float aBright;
+
+      uniform float uTime;
+      uniform float uFlow;
+      uniform float uAmp;
+      uniform float uOpacity;
+      uniform vec2 uResolution;
+      uniform float uPixelRatio;
+      uniform vec3 uNear;
+      uniform vec3 uFar;
+      uniform vec3 uCrest;
+      uniform vec3 uValley;
+      uniform vec3 uFresnel;
+      uniform vec2 uFade;
+
+      varying vec3 vColor;
+      varying float vAlpha;
+      varying float vAcross;
+      varying float vGlint;
+      varying float vTide;
+
+      ${OCEAN_SURFACE_GLSL}
+
+      vec3 displacedPoint(vec3 source) {
+        return source + oceanDisplace(source.xz);
+      }
+
+      void main() {
+        vec3 p = displacedPoint(position);
+        vec3 prev = displacedPoint(aPrevious);
+        vec3 following = displacedPoint(aNext);
+        vec3 surfaceNormal = oceanNormal(position.xz);
+        float height = p.y - position.y;
+        float crest = smoothstep(4.5, 16.0, height);
+        float valley = 1.0 - smoothstep(-5.0, 4.0, height);
+        float tide = oceanTide(aPotential);
+
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        vec4 clip = projectionMatrix * mv;
+        vec4 prevClip = projectionMatrix * modelViewMatrix * vec4(prev, 1.0);
+        vec4 nextClip = projectionMatrix * modelViewMatrix * vec4(following, 1.0);
+        vec2 currentNdc = clip.xy / max(clip.w, 0.0001);
+        vec2 prevNdc = prevClip.xy / max(prevClip.w, 0.0001);
+        vec2 nextNdc = nextClip.xy / max(nextClip.w, 0.0001);
+        vec2 tangent = nextNdc - prevNdc;
+        if (length(tangent) < 0.00001) tangent = nextNdc - currentNdc;
+        tangent = normalize(tangent + vec2(0.00001, 0.0));
+        vec2 screenNormal = vec2(-tangent.y, tangent.x);
+
+        float widthCss = mix(2.2, 3.5, aDensity)
+          + crest * 0.8
+          + tide * 0.7;
+        float horizonScale = mix(0.56, 1.0, 1.0 - smoothstep(uFade.x, uFade.y, -mv.z));
+        widthCss = min(5.0, widthCss) * horizonScale;
+        vec2 pixelOffset = screenNormal
+          * aSide
+          * widthCss
+          * uPixelRatio
+          * 2.0
+          / max(uResolution, vec2(1.0));
+        clip.xy += pixelOffset * clip.w;
+        gl_Position = clip;
+
+        vec3 normalView = normalize(normalMatrix * surfaceNormal);
+        vec3 viewDirection = normalize(-mv.xyz);
+        float fresnel = pow(1.0 - max(dot(normalView, viewDirection), 0.0), 3.0);
+        vec3 lightDirection = normalize(vec3(0.34, 0.82, 0.45));
+        float specular = pow(max(dot(reflect(-lightDirection, normalView), viewDirection), 0.0), 24.0);
+        float glint = crest * tide * specular;
+        float zMix = clamp((p.z - ${SEA_Z_MIN.toFixed(1)}) / ${(SEA_Z_MAX - SEA_Z_MIN).toFixed(1)}, 0.0, 1.0);
+        vec3 base = mix(uFar, uNear, smoothstep(0.08, 0.92, zMix));
+        base = mix(base, uValley, valley * 0.22);
+        base = mix(base, uFresnel, fresnel * (1.0 - crest) * 0.16);
+        vColor = mix(base, uCrest, crest * 0.72 + glint * 0.82)
+          * (0.78 + aBright * 0.62);
+        vAlpha = uOpacity
+          * (1.0 - smoothstep(uFade.x, uFade.y, -mv.z))
+          * (0.62 + crest * 0.42 + tide * 0.3);
+        vAcross = aSide;
+        vGlint = glint;
+        vTide = tide;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+      varying float vAcross;
+      varying float vGlint;
+      varying float vTide;
+
+      void main() {
+        float across = abs(vAcross);
+        float core = 1.0 - smoothstep(0.04, 0.22, across);
+        float halo = 1.0 - smoothstep(0.16, 1.0, across);
+        float alpha = vAlpha * (halo * 0.34 + core * (0.76 + vTide * 0.34));
+        if (alpha <= 0.003) discard;
+        vec3 whiteGold = vec3(1.0, 0.97, 0.88);
+        vec3 color = mix(vColor, whiteGold, core * (0.48 + vGlint * 0.52));
+        color *= 1.0 + core * (vTide * 0.52 + vGlint * 1.8);
+        gl_FragColor = vec4(color, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+  });
+
+  const object = new THREE.Mesh(geometry, material);
+  object.renderOrder = 3;
+  object.frustumCulled = false;
+  object.layers.enable(OCEAN_BLOOM_LAYER);
   return { object, material };
 }
 
@@ -694,8 +958,8 @@ function createFlowingOcean(
   random: () => number,
   quality: SceneQuality,
   flowField: OceanFlowField,
+  masterPaths: OceanMasterPath[],
 ): { object: THREE.LineSegments; material: THREE.ShaderMaterial } {
-  const masterRowCount = quality === "default" ? 176 : 96;
   const detailColumns = quality === "default" ? 88 : 50;
   const detailRows = quality === "default" ? 70 : 40;
   const traceStep = quality === "default" ? 3.6 : 5.4;
@@ -707,8 +971,7 @@ function createFlowingOcean(
   const brights: number[] = [];
   const depths: number[] = [];
   const layers: number[] = [];
-  const flowCoords: number[] = [];
-  const flowSeeds: number[] = [];
+  const potentials: number[] = [];
 
   const offsetPoint = (point: OceanFlowPoint, offset: number, depth: number) => {
     if (offset === 0) {
@@ -733,9 +996,6 @@ function createFlowingOcean(
     depth: number,
     bright: number,
     layer: number,
-    seed: number,
-    startCoord: number,
-    endCoord: number,
   ) => {
     const a = offsetPoint(start, offset, depth);
     const b = offsetPoint(end, offset, depth);
@@ -743,8 +1003,7 @@ function createFlowingOcean(
     brights.push(bright, bright);
     depths.push(depth, depth);
     layers.push(layer, layer);
-    flowCoords.push(startCoord, endCoord);
-    flowSeeds.push(seed, seed);
+    potentials.push(start.potential, end.potential);
   };
 
   const appendPath = (
@@ -753,14 +1012,8 @@ function createFlowingOcean(
     depth: number,
     bright: number,
     layer: number,
-    seed: number,
   ) => {
-    let distance = 0;
     for (let index = 0; index < path.length - 1; index += 1) {
-      const segmentLength = Math.hypot(
-        path[index + 1].x - path[index].x,
-        path[index + 1].z - path[index].z,
-      );
       appendSegment(
         path[index],
         path[index + 1],
@@ -768,36 +1021,13 @@ function createFlowingOcean(
         depth,
         bright,
         layer,
-        seed,
-        distance / 42,
-        (distance + segmentLength) / 42,
       );
-      distance += segmentLength;
     }
   };
 
   // Sparse full-length streamlines reveal the large-scale current without making a net.
-  for (let row = 0; row < masterRowCount; row += 1) {
-    const seedZ = SEA_Z_MIN
-      + (row + 0.5) / masterRowCount * zRange
-      + (random() - 0.5) * zRange / masterRowCount * 0.45;
-    for (const side of [-1, 1] as const) {
-      const seedX = WATERFALL_CENTER_X + side * (7 + random() * 3.5);
-      const path = flowField.trace(seedX, seedZ, {
-        maxDistance: SEA_X_HALF + 92,
-        step: traceStep,
-      });
-      const sample = flowField.sample(seedX, seedZ);
-      const baseDepth = random() < 0.08 ? 0.035 + random() * 0.06 : random() * 0.014;
-      appendPath(
-        path,
-        0,
-        baseDepth,
-        0.22 + sample.density * 0.24 + random() * 0.11,
-        0,
-        random(),
-      );
-    }
+  for (const master of masterPaths) {
+    appendPath(master.path, 0, master.depth, master.bright, 0);
   }
 
   // Thousands of short, stratified traces provide fiber density. Every segment is
@@ -828,10 +1058,9 @@ function createFlowingOcean(
       const familySize = random() < 0.16 ? 2 : 1;
       const depth = random() < 0.1 ? 0.018 + random() * 0.07 : random() * 0.012;
       const bright = 0.45 + flow.density * 0.34 + random() * 0.28;
-      const seed = random();
       for (let strand = 0; strand < familySize; strand += 1) {
         const offset = familySize === 1 ? 0 : (strand - 0.5) * 0.72;
-        appendPath(path, offset, depth, bright * (0.94 + strand * 0.06), 1, seed);
+        appendPath(path, offset, depth, bright * (0.94 + strand * 0.06), 1);
       }
     }
   }
@@ -841,8 +1070,7 @@ function createFlowingOcean(
   geometry.setAttribute("aBright", new THREE.Float32BufferAttribute(brights, 1));
   geometry.setAttribute("aDepth", new THREE.Float32BufferAttribute(depths, 1));
   geometry.setAttribute("aLayer", new THREE.Float32BufferAttribute(layers, 1));
-  geometry.setAttribute("aFlowCoord", new THREE.Float32BufferAttribute(flowCoords, 1));
-  geometry.setAttribute("aFlowSeed", new THREE.Float32BufferAttribute(flowSeeds, 1));
+  geometry.setAttribute("aPotential", new THREE.Float32BufferAttribute(potentials, 1));
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -854,7 +1082,9 @@ function createFlowingOcean(
       uNear: { value: new THREE.Color(0xffd98a) },
       uFar: { value: new THREE.Color(0xb07f2e) },
       uCrest: { value: new THREE.Color(0xfff6dc) },
-      uDeep: { value: new THREE.Color(0x140d05) },
+      uValley: { value: new THREE.Color(0x364868) },
+      uFresnel: { value: new THREE.Color(0x7b8db7) },
+      uDeep: { value: new THREE.Color(0x17152b) },
       uZRange: { value: new THREE.Vector2(SEA_Z_MIN, SEA_Z_MAX) },
       // 视距淡出：超出 uFade.x 起渐隐，至 uFade.y 归零，使海域没入黑暗形成无际地平。
       uFade: { value: new THREE.Vector2(SEA_FADE_NEAR, SEA_FADE_FAR) },
@@ -863,8 +1093,7 @@ function createFlowingOcean(
       attribute float aBright;
       attribute float aDepth;
       attribute float aLayer;
-      attribute float aFlowCoord;
-      attribute float aFlowSeed;
+      attribute float aPotential;
 
       uniform float uTime;
       uniform float uFlow;
@@ -873,22 +1102,25 @@ function createFlowingOcean(
       uniform vec3 uNear;
       uniform vec3 uFar;
       uniform vec3 uCrest;
+      uniform vec3 uValley;
+      uniform vec3 uFresnel;
       uniform vec3 uDeep;
       uniform vec2 uZRange;
       uniform vec2 uFade;
 
       varying vec3 vColor;
       varying float vAlpha;
-      varying float vFlowCoord;
-      varying float vFlowSeed;
+      varying float vTide;
+      varying float vGlint;
       varying float vLayer;
 
-      ${OCEAN_HEIGHT_GLSL}
+      ${OCEAN_SURFACE_GLSL}
 
       void main() {
         vec3 p = position;
         // 波浪只作用于接近海面的丝线；越深越平静(未来不可知、无涌动)。
         float surfaceness = 1.0 - clamp(aDepth, 0.0, 1.0);
+        vec3 surfaceNormal = oceanNormal(p.xz);
         // 三维波面位移：水平+垂直的圆周轨道，使丝线披在起伏波面上并顺流摆动（而非整体上下抽动）。
         vec3 disp = oceanDisplace(p.xz) * surfaceness;
         p += disp;
@@ -899,7 +1131,18 @@ function createFlowingOcean(
         vec3 base = mix(uFar, uNear, smoothstep(0.08, 0.92, d));
         // 波峰高度归一（振幅约 ±22）：脊顶提亮为白金。
         float crest = smoothstep(5.0, 17.0, h);
-        vec3 col = mix(base, uCrest, crest * 0.82)
+        float valley = 1.0 - smoothstep(-5.0, 4.0, h);
+        float tide = oceanTide(aPotential);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        vec3 normalView = normalize(normalMatrix * surfaceNormal);
+        vec3 viewDirection = normalize(-mv.xyz);
+        float fresnel = pow(1.0 - max(dot(normalView, viewDirection), 0.0), 3.0);
+        vec3 lightDirection = normalize(vec3(0.34, 0.82, 0.45));
+        float specular = pow(max(dot(reflect(-lightDirection, normalView), viewDirection), 0.0), 24.0);
+        float glint = crest * tide * specular * surfaceness;
+        base = mix(base, uValley, valley * 0.22 * surfaceness);
+        base = mix(base, uFresnel, fresnel * (1.0 - crest) * 0.16 * surfaceness);
+        vec3 col = mix(base, uCrest, crest * 0.82 + glint * 0.74)
           * aBright
           * mix(0.66, 1.0, aLayer);
         // 沉入未来：变冷变暗。
@@ -908,7 +1151,6 @@ function createFlowingOcean(
 
         float depthFade = mix(1.0, 0.04, aDepth); // 越深越淡
 
-        vec4 mv = modelViewMatrix * vec4(p, 1.0);
         // 视距淡出：远处渐隐至零，海域没入黑暗，形成无边地平线（取代有限平面的硬边）。
         float viewDist = -mv.z;
         float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, viewDist);
@@ -916,9 +1158,10 @@ function createFlowingOcean(
         vAlpha = uOpacity
           * horizonFade
           * depthFade
-          * mix(0.16 + crest * 0.38, 0.6 + crest * 0.84, aLayer);
-        vFlowCoord = aFlowCoord;
-        vFlowSeed = aFlowSeed;
+          * mix(0.16 + crest * 0.38, 0.6 + crest * 0.84, aLayer)
+          * (1.0 + tide * mix(0.12, 0.36, aLayer));
+        vTide = tide;
+        vGlint = glint;
         vLayer = aLayer;
         gl_Position = projectionMatrix * mv;
       }
@@ -926,25 +1169,16 @@ function createFlowingOcean(
     fragmentShader: `
       varying vec3 vColor;
       varying float vAlpha;
-      varying float vFlowCoord;
-      varying float vFlowSeed;
+      varying float vTide;
+      varying float vGlint;
       varying float vLayer;
-
-      uniform float uTime;
-      uniform float uFlow;
 
       void main() {
         if (vAlpha <= 0.003) discard;
-        float phase = fract(
-          vFlowCoord
-          - uTime * 0.00011 * (0.76 + vFlowSeed * 0.48) * uFlow
-          + vFlowSeed
-        );
-        float pulse = smoothstep(0.0, 0.045, phase)
-          * (1.0 - smoothstep(0.045, 0.19, phase));
-        float pulseStrength = mix(0.16, 0.82, vLayer) * pulse;
+        float pulseStrength = mix(0.16, 0.82, vLayer) * vTide;
         vec3 color = mix(vColor, vec3(1.0, 0.95, 0.82), pulseStrength * 0.5);
-        gl_FragColor = vec4(color, vAlpha * (1.0 + pulseStrength));
+        color *= 1.0 + vGlint * 1.25;
+        gl_FragColor = vec4(color, vAlpha * (1.0 + pulseStrength + vGlint * 0.55));
       }
     `,
     transparent: true,
@@ -971,6 +1205,12 @@ function createSeaFoam(
   const brights = new Float32Array(count);
   const flowVectors = new Float32Array(count * 2);
   const drips = new Float32Array(count); // 0 = 贴海面的金沙；>0 = 从波下垂落的光丝(下坠深度)
+  const potentials = new Float32Array(count);
+  const densities = new Float32Array(count);
+  const lifePhases = new Float32Array(count);
+  const lifeRates = new Float32Array(count);
+  const sizeClasses = new Float32Array(count);
+  const crestPulls = new Float32Array(count);
   for (let index = 0; index < count; index += 1) {
     let x = xMin + width * random();
     let z = SEA_Z_MIN + zRange * random();
@@ -986,6 +1226,13 @@ function createSeaFoam(
     brights[index] = 0.42 + flow.density * 0.48 + random() * 0.78;
     flowVectors[index * 2] = flow.vx;
     flowVectors[index * 2 + 1] = flow.vz;
+    potentials[index] = flow.potential;
+    densities[index] = flow.density;
+    lifePhases[index] = random();
+    lifeRates[index] = 1 / (3200 + random() * 3600);
+    const sizeRank = random();
+    sizeClasses[index] = sizeRank < 0.005 ? 2 : sizeRank < 0.08 ? 1 : 0;
+    crestPulls[index] = 0.35 + random() * 0.65;
     // 极少量短垂光保留海面纵深，不再形成大面积根系状悬丝。
     drips[index] = random() < 0.045 ? Math.pow(random(), 1.7) * 22 : 0;
   }
@@ -994,6 +1241,12 @@ function createSeaFoam(
   geometry.setAttribute("aBright", new THREE.BufferAttribute(brights, 1));
   geometry.setAttribute("aFlow", new THREE.BufferAttribute(flowVectors, 2));
   geometry.setAttribute("aDrip", new THREE.BufferAttribute(drips, 1));
+  geometry.setAttribute("aPotential", new THREE.BufferAttribute(potentials, 1));
+  geometry.setAttribute("aDensity", new THREE.BufferAttribute(densities, 1));
+  geometry.setAttribute("aLifePhase", new THREE.BufferAttribute(lifePhases, 1));
+  geometry.setAttribute("aLifeRate", new THREE.BufferAttribute(lifeRates, 1));
+  geometry.setAttribute("aSizeClass", new THREE.BufferAttribute(sizeClasses, 1));
+  geometry.setAttribute("aCrestPull", new THREE.BufferAttribute(crestPulls, 1));
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -1006,6 +1259,8 @@ function createSeaFoam(
       uNear: { value: new THREE.Color(0xffe19a) },
       uFar: { value: new THREE.Color(0xc08a38) },
       uCrest: { value: new THREE.Color(0xfff8e2) },
+      uValley: { value: new THREE.Color(0x364868) },
+      uFresnel: { value: new THREE.Color(0x7b8db7) },
       uZRange: { value: new THREE.Vector2(SEA_Z_MIN, SEA_Z_MAX) },
       uFade: { value: new THREE.Vector2(SEA_FADE_NEAR, SEA_FADE_FAR) },
     },
@@ -1013,6 +1268,12 @@ function createSeaFoam(
       attribute float aBright;
       attribute float aDrip;
       attribute vec2 aFlow;
+      attribute float aPotential;
+      attribute float aDensity;
+      attribute float aLifePhase;
+      attribute float aLifeRate;
+      attribute float aSizeClass;
+      attribute float aCrestPull;
 
       uniform float uTime;
       uniform float uFlow;
@@ -1022,13 +1283,17 @@ function createSeaFoam(
       uniform vec3 uNear;
       uniform vec3 uFar;
       uniform vec3 uCrest;
+      uniform vec3 uValley;
+      uniform vec3 uFresnel;
       uniform vec2 uZRange;
       uniform vec2 uFade;
 
       varying vec3 vColor;
       varying float vAlpha;
+      varying float vSizeClass;
+      varying float vCoreEnergy;
 
-      ${OCEAN_HEIGHT_GLSL}
+      ${OCEAN_SURFACE_GLSL}
 
       void main() {
         vec3 p = position;
@@ -1036,37 +1301,93 @@ function createSeaFoam(
           uTime * 0.00032 * uFlow + position.x * 0.021 + position.z * 0.013
         ) * 0.72;
         p.xz += aFlow * tangentDrift;
+        vec2 slope = oceanSlope(p.xz);
+        vec2 uphill = length(slope) > 0.0001 ? normalize(slope) : vec2(0.0);
         // 与丝线海共用三维波面轨道，浪花随波滚动流淌。
         vec3 disp = oceanDisplace(p.xz);
-        p += disp;
         float h = disp.y;
+        float crest = smoothstep(4.5, 16.0, h);
+        float crestPull = min(1.6, length(slope) * 2.4)
+          * aCrestPull
+          * pow(1.0 - crest, 2.0);
+        p.xz += uphill * crestPull;
+        p += disp;
         // 垂落光丝：从海面向下悬垂，并随时间缓慢滴落循环。
         float t = uTime * 0.00035 * uFlow;
         float sag = aDrip * (0.6 + 0.4 * sin(t * 1.7 + p.x * 0.05));
         p.y -= sag;
         float d = clamp((p.z - uZRange.x) / (uZRange.y - uZRange.x), 0.0, 1.0);
         vec3 base = mix(uFar, uNear, smoothstep(0.08, 0.92, d));
-        float crest = smoothstep(5.0, 17.0, h);
-        vColor = mix(base, uCrest, crest * 0.8) * aBright;
+        float valley = 1.0 - smoothstep(-5.0, 4.0, h);
+        float tide = oceanTide(aPotential);
+        vec3 surfaceNormal = oceanNormal(position.xz);
         // 垂落段随下坠变暗，融入下方黑暗。
         float dripFade = 1.0 - smoothstep(0.0, 22.0, sag) * 0.82;
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        vec3 normalView = normalize(normalMatrix * surfaceNormal);
+        vec3 viewDirection = normalize(-mv.xyz);
+        float fresnel = pow(1.0 - max(dot(normalView, viewDirection), 0.0), 3.0);
+        vec3 lightDirection = normalize(vec3(0.34, 0.82, 0.45));
+        float specular = pow(max(dot(reflect(-lightDirection, normalView), viewDirection), 0.0), 24.0);
+        float glint = crest * tide * specular;
+        base = mix(base, uValley, valley * 0.22);
+        base = mix(base, uFresnel, fresnel * (1.0 - crest) * 0.16);
+        vColor = mix(base, uCrest, crest * 0.8 + glint * 0.85) * min(aBright, 1.12);
+        float age = fract(aLifePhase + uTime * aLifeRate * uFlow);
+        float life = smoothstep(0.0, 0.16, age)
+          * (1.0 - smoothstep(0.42, 1.0, age));
+        float staticLife = 0.56 + aLifePhase * 0.34;
+        life = mix(staticLife, life, uFlow);
+        float sizeMultiplier = aSizeClass < 0.5
+          ? mix(0.7, 1.2, aLifePhase)
+          : aSizeClass < 1.5
+            ? mix(1.4, 2.1, aLifePhase)
+            : mix(2.4, 3.0, aLifePhase);
         // 视距淡出：远处渐隐至零，浪花没入黑暗，与丝线海协同形成无际地平。
         float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, -mv.z);
-        vAlpha = uOpacity * horizonFade * dripFade * (0.07 + crest * 1.08);
+        float crestEnergy = 0.06 + crest * (0.84 + aDensity * 0.34);
+        vAlpha = uOpacity
+          * horizonFade
+          * dripFade
+          * crestEnergy
+          * (0.3 + life * 0.9)
+          * (1.0 + tide * 0.42);
+        vSizeClass = aSizeClass;
+        vCoreEnergy = min(1.8, 0.18 + tide * 0.28 + glint * 0.82 + aSizeClass * 0.42);
         gl_Position = projectionMatrix * mv;
-        gl_PointSize = clamp(uSize * (300.0 / max(1.0, -mv.z)), 0.6, 3.6);
+        gl_PointSize = clamp(
+          uSize
+          * sizeMultiplier
+          * (1.0 + crest * 0.62 + tide * 0.25)
+          * (300.0 / max(1.0, -mv.z)),
+          0.6,
+          10.0
+        );
       }
     `,
     fragmentShader: `
       varying vec3 vColor;
       varying float vAlpha;
+      varying float vSizeClass;
+      varying float vCoreEnergy;
 
       void main() {
-        float distanceToCenter = length(gl_PointCoord - vec2(0.5));
-        float alpha = (1.0 - smoothstep(0.1, 0.5, distanceToCenter)) * vAlpha;
+        vec2 uv = gl_PointCoord - vec2(0.5);
+        float distanceToCenter = length(uv);
+        float core = 1.0 - smoothstep(0.04, 0.15, distanceToCenter);
+        float halo = 1.0 - smoothstep(0.15, 0.5, distanceToCenter);
+        float horizontalRay = (1.0 - smoothstep(0.025, 0.11, abs(uv.y)))
+          * (1.0 - smoothstep(0.12, 0.5, abs(uv.x)));
+        float verticalRay = (1.0 - smoothstep(0.025, 0.11, abs(uv.x)))
+          * (1.0 - smoothstep(0.12, 0.5, abs(uv.y)));
+        float focus = smoothstep(1.5, 2.0, vSizeClass);
+        float rays = max(horizontalRay, verticalRay) * focus * 0.34;
+        float alpha = (halo * 0.34 + core * 0.9 + rays) * vAlpha;
         if (alpha <= 0.003) discard;
-        gl_FragColor = vec4(vColor, alpha);
+        vec3 whiteGold = vec3(1.0, 0.97, 0.88);
+        vec3 color = mix(vColor, whiteGold, core * 0.68 + rays * 0.28);
+        color *= 1.0 + core * vCoreEnergy + rays * 0.56;
+        gl_FragColor = vec4(color, alpha);
       }
     `,
     transparent: true,
@@ -1075,6 +1396,111 @@ function createSeaFoam(
   });
   const object = new THREE.Points(geometry, material);
   object.renderOrder = 3;
+  object.frustumCulled = false;
+  object.layers.enable(OCEAN_BLOOM_LAYER);
+  return { object, material };
+}
+
+function createDeepSeaDust(
+  random: () => number,
+  quality: SceneQuality,
+  flowField: OceanFlowField,
+): { object: THREE.Points; material: THREE.ShaderMaterial } {
+  const count = quality === "default" ? 3200 : 1000;
+  const positions = new Float32Array(count * 3);
+  const flows = new Float32Array(count * 2);
+  const depthPhases = new Float32Array(count);
+  const sinkRates = new Float32Array(count);
+  const sizes = new Float32Array(count);
+  const brights = new Float32Array(count);
+  const width = SEA_X_HALF * 2;
+  const zRange = SEA_Z_MAX - SEA_Z_MIN;
+
+  for (let index = 0; index < count; index += 1) {
+    const x = WATERFALL_CENTER_X - SEA_X_HALF + width * random();
+    const z = SEA_Z_MIN + zRange * random();
+    const flow = flowField.sample(x, z);
+    positions[index * 3] = x;
+    positions[index * 3 + 1] = SEA_BASE_Y;
+    positions[index * 3 + 2] = z;
+    flows[index * 2] = flow.vx;
+    flows[index * 2 + 1] = flow.vz;
+    depthPhases[index] = random();
+    sinkRates[index] = 1 / (12000 + random() * 12000);
+    sizes[index] = 0.65 + Math.pow(random(), 2.2) * 2.8;
+    brights[index] = 0.38 + flow.density * 0.34 + random() * 0.36;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("aFlow", new THREE.BufferAttribute(flows, 2));
+  geometry.setAttribute("aDepthPhase", new THREE.BufferAttribute(depthPhases, 1));
+  geometry.setAttribute("aSinkRate", new THREE.BufferAttribute(sinkRates, 1));
+  geometry.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
+  geometry.setAttribute("aBright", new THREE.BufferAttribute(brights, 1));
+
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uFlow: { value: 1 },
+      uOpacity: { value: 0.14 },
+      uNear: { value: new THREE.Color(0x9b855f) },
+      uDeep: { value: new THREE.Color(0x434969) },
+      uFade: { value: new THREE.Vector2(SEA_FADE_NEAR, SEA_FADE_FAR) },
+    },
+    vertexShader: `
+      attribute vec2 aFlow;
+      attribute float aDepthPhase;
+      attribute float aSinkRate;
+      attribute float aSize;
+      attribute float aBright;
+
+      uniform float uTime;
+      uniform float uFlow;
+      uniform float uOpacity;
+      uniform vec3 uNear;
+      uniform vec3 uDeep;
+      uniform vec2 uFade;
+
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        float age = fract(aDepthPhase + uTime * aSinkRate * uFlow);
+        float depth = mix(5.0, 42.0, age);
+        vec3 p = position;
+        p.y -= depth;
+        float drift = sin(uTime * 0.00011 * uFlow + aDepthPhase * 6.28318) * 1.8;
+        p.xz += aFlow * drift;
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, -mv.z);
+        float depthFade = 1.0 - smoothstep(8.0, 42.0, depth) * 0.74;
+        float life = sin(age * 3.14159265);
+        life = mix(0.66, max(0.18, life), uFlow);
+        vColor = mix(uNear, uDeep, smoothstep(5.0, 42.0, depth)) * aBright;
+        vAlpha = uOpacity * horizonFade * depthFade * life;
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = clamp(aSize * (300.0 / max(1.0, -mv.z)), 0.55, 5.5);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      varying float vAlpha;
+
+      void main() {
+        float radius = length(gl_PointCoord - vec2(0.5));
+        float alpha = (1.0 - smoothstep(0.08, 0.5, radius)) * vAlpha;
+        if (alpha <= 0.002) discard;
+        gl_FragColor = vec4(vColor, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+
+  const object = new THREE.Points(geometry, material);
+  object.renderOrder = 1;
   object.frustumCulled = false;
   return { object, material };
 }
@@ -1231,10 +1657,23 @@ export function createHistoryVisuals(options: {
     mouthZ: CONFLUENCE_CENTER_Z,
     seed,
   });
-  const flowingOcean = createFlowingOcean(random, quality, oceanFlowField);
+  const masterPaths = buildOceanMasterPaths(
+    seededRandom(seed + (quality === "default" ? 503 : 607)),
+    quality,
+    oceanFlowField,
+  );
+  const flowingOcean = createFlowingOcean(random, quality, oceanFlowField, masterPaths);
+  const crestRibbons = createOceanCrestRibbons(masterPaths);
   const confluenceFlows = createConfluenceFlows(random, quality, oceanFlowField);
   const seaFoam = createSeaFoam(random, quality, oceanFlowField);
-  root.add(flowingOcean.object, confluenceFlows.object, seaFoam.object);
+  const deepSeaDust = createDeepSeaDust(random, quality, oceanFlowField);
+  root.add(
+    deepSeaDust.object,
+    flowingOcean.object,
+    crestRibbons.object,
+    confluenceFlows.object,
+    seaFoam.object,
+  );
 
   const waterfallFibers = createWaterfallFibers(random, topY, quality);
   const waterfallParticles = createWaterfallParticles(random, topY, quality);
@@ -1309,6 +1748,10 @@ export function createHistoryVisuals(options: {
       flowingOcean.material.uniforms.uFlow.value = oceanFlow;
       flowingOcean.material.uniforms.uAmp.value = oceanAmp;
       flowingOcean.material.uniforms.uOpacity.value = 0.36 * visibility;
+      crestRibbons.material.uniforms.uTime.value = now;
+      crestRibbons.material.uniforms.uFlow.value = oceanFlow;
+      crestRibbons.material.uniforms.uAmp.value = oceanAmp;
+      crestRibbons.material.uniforms.uOpacity.value = (lowMotion ? 0.34 : 0.5) * visibility;
       confluenceFlows.material.uniforms.uTime.value = now;
       confluenceFlows.material.uniforms.uFlow.value = oceanFlow;
       confluenceFlows.material.uniforms.uAmp.value = oceanAmp;
@@ -1317,6 +1760,9 @@ export function createHistoryVisuals(options: {
       seaFoam.material.uniforms.uFlow.value = oceanFlow;
       seaFoam.material.uniforms.uAmp.value = oceanAmp;
       seaFoam.material.uniforms.uOpacity.value = 0.92 * visibility;
+      deepSeaDust.material.uniforms.uTime.value = now;
+      deepSeaDust.material.uniforms.uFlow.value = oceanFlow;
+      deepSeaDust.material.uniforms.uOpacity.value = 0.14 * visibility;
 
       const breath = lowMotion ? 1 : 1 + Math.sin(now * 0.00045) * 0.045;
       sourceGlow.scale.set(42 * breath, 48 * breath, 1);
@@ -1336,6 +1782,13 @@ export function createHistoryVisuals(options: {
           state.baseOpacity * (0.88 + motion * 0.12) * Math.max(0.28, visibility * 0.42);
       }
     },
+    resize(width, height, pixelRatio) {
+      crestRibbons.material.uniforms.uResolution.value.set(
+        Math.max(1, width * pixelRatio),
+        Math.max(1, height * pixelRatio),
+      );
+      crestRibbons.material.uniforms.uPixelRatio.value = pixelRatio;
+    },
     dispose() {
       cloudTexture.dispose();
       radialTexture.dispose();
@@ -1347,6 +1800,7 @@ export function createHistoryPostProcessing(
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
   camera: THREE.Camera,
+  quality: SceneQuality,
 ): HistoryPostProcessing {
   const composer = new EffectComposer(renderer);
   composer.setPixelRatio(renderer.getPixelRatio());
@@ -1359,16 +1813,72 @@ export function createHistoryPostProcessing(
       0.58,
     ),
   );
+
+  let oceanBloomComposer: EffectComposer | null = null;
+  let oceanBloomMaterial: THREE.ShaderMaterial | null = null;
+  if (quality === "default") {
+    oceanBloomComposer = new EffectComposer(renderer);
+    oceanBloomComposer.renderToScreen = false;
+    oceanBloomComposer.setPixelRatio(renderer.getPixelRatio() * 0.5);
+    oceanBloomComposer.addPass(new RenderPass(scene, camera));
+    oceanBloomComposer.addPass(
+      new UnrealBloomPass(
+        new THREE.Vector2(1, 1),
+        0.8,
+        0.72,
+        1.08,
+      ),
+    );
+
+    const oceanBloomPass = new ShaderPass({
+      name: "OceanBloomCombine",
+      uniforms: {
+        baseTexture: { value: null },
+        oceanBloomTexture: { value: null },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D baseTexture;
+        uniform sampler2D oceanBloomTexture;
+        varying vec2 vUv;
+        void main() {
+          vec4 base = texture2D(baseTexture, vUv);
+          vec3 oceanBloom = texture2D(oceanBloomTexture, vUv).rgb;
+          gl_FragColor = vec4(base.rgb + oceanBloom * 0.56, base.a);
+        }
+      `,
+    }, "baseTexture");
+    oceanBloomPass.uniforms.oceanBloomTexture.value = oceanBloomComposer.renderTarget2.texture;
+    oceanBloomMaterial = oceanBloomPass.material;
+    oceanBloomMaterial.depthWrite = false;
+    oceanBloomMaterial.depthTest = false;
+    composer.addPass(oceanBloomPass);
+  }
   composer.addPass(new OutputPass());
 
   return {
     render() {
+      if (oceanBloomComposer) {
+        const cameraLayerMask = camera.layers.mask;
+        camera.layers.set(OCEAN_BLOOM_LAYER);
+        oceanBloomComposer.render();
+        camera.layers.mask = cameraLayerMask;
+      }
       composer.render();
     },
     resize(width, height) {
       composer.setSize(width, height);
+      oceanBloomComposer?.setSize(width, height);
     },
     dispose() {
+      oceanBloomComposer?.dispose();
+      oceanBloomMaterial?.dispose();
       composer.dispose();
     },
   };
