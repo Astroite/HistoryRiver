@@ -194,7 +194,6 @@ export function HistoryRiver() {
       "由人物丝线、事件点云和思想丝线构成的三维历史长河；每根丝线是一个人物，粗细与辉光表示其影响力",
     );
     mount.appendChild(renderer.domElement);
-    const postProcessing = createHistoryPostProcessing(renderer, scene, camera, quality);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -217,6 +216,13 @@ export function HistoryRiver() {
       quality,
     });
     riverGroup.add(visuals.root);
+    const postProcessing = createHistoryPostProcessing(
+      renderer,
+      scene,
+      camera,
+      quality,
+      visuals.setOceanBloomPass,
+    );
     const geography = createHistoryGeography();
     riverGroup.add(geography.root);
 

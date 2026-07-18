@@ -2,6 +2,8 @@
 
 当前迭代放在 `docs/iterations/current/`，完成后整体归档到 `docs/iterations/archive/MN/`。
 
+当前没有活跃迭代。最近归档：[M1-01 核心体验原型](./archive/M1-01/README.md)（2026-07-18，有保留项）。
+
 ## 阶段契约
 
 1. **讨论**：在 `current/plan.md` 明确任务上下文、范围、依赖与可执行验收。

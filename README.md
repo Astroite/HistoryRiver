@@ -30,7 +30,7 @@ npm test
 - 视觉设计基线：[docs/visual-design.md](./docs/visual-design.md)
 - 历史地理连续体数据：[docs/geography-data.md](./docs/geography-data.md)
 - 技术基线：[docs/tech.md](./docs/tech.md)
-- 当前迭代：[docs/iterations/current/README.md](./docs/iterations/current/README.md)
+- 最近归档迭代：[M1-01 核心体验原型](./docs/iterations/archive/M1-01/README.md)
 
 当前 P0 不是正式历史内容。人物、事件、关系、影响力与地理位置均为验证交互语义而制作的确定性模拟夹具。
 

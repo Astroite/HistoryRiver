@@ -24,6 +24,7 @@ export interface HistoryVisualRig {
   root: THREE.Group;
   update(now: number, view: ExperienceState, lowMotion: boolean): void;
   resize(width: number, height: number, pixelRatio: number): void;
+  setOceanBloomPass(active: boolean): void;
   dispose(): void;
 }
 
@@ -38,6 +39,20 @@ const CONFLUENCE_CENTER_Z = 4;
 const OCEAN_BLOOM_LAYER = 1;
 const OCEAN_TIDE_WAVELENGTH = 170;
 const OCEAN_TIDE_PERIOD_MS = 6500;
+// 周期加倍：彗星流光的传播速度与同一点的出现频率同时降至 50%。
+const OCEAN_COMET_PERIOD_MS = 18000;
+const OCEAN_LINE_DENSITY_SCALE = 2;
+const OCEAN_LINE_BRIGHTNESS_GAIN = 1.5;
+// 提高轨迹采样密度，减少长潮脊与河口汇流在波面上的折线感；
+// 只增加每条轨迹的分段数，不改变流线、粒子或绘制对象数量。
+const OCEAN_TRACE_STEP: Record<SceneQuality, number> = {
+  default: 2.4,
+  reduced: 3.6,
+};
+const CONFLUENCE_TRACE_STEP: Record<SceneQuality, number> = {
+  default: 2.2,
+  reduced: 3.4,
+};
 const CELESTIAL = new THREE.Color(0x9ebbd5);
 const IVORY = new THREE.Color(0xffdda8);
 const MEMORY_GOLD = new THREE.Color(0xe99b38);
@@ -169,6 +184,19 @@ ${OCEAN_WAVES.map(
     );
     return smoothstep(0.0, 0.12, phase)
       * (1.0 - smoothstep(0.12, 0.42, phase));
+  }
+
+  float oceanComet(float potential, float seed) {
+    float phase = fract(
+      potential / ${OCEAN_TIDE_WAVELENGTH.toFixed(1)}
+      - uTime / ${OCEAN_COMET_PERIOD_MS.toFixed(1)} * uFlow
+      + seed
+    );
+    // 势值沿流向递增；phase 接近 1 的点位于亮头之后，形成约 8 势值单位的短尾。
+    float distanceBehind = fract(-phase) * ${OCEAN_TIDE_WAVELENGTH.toFixed(1)};
+    float head = 1.0 - smoothstep(0.0, 1.6, distanceBehind);
+    float tail = 1.0 - smoothstep(0.0, 8.0, distanceBehind);
+    return max(head, tail * tail * 0.72);
   }
 
   float oceanHeight(vec2 q) { return oceanDisplace(q).y; }
@@ -585,7 +613,7 @@ function createConfluenceFlows(
   quality: SceneQuality,
   flowField: OceanFlowField,
 ): { object: THREE.LineSegments; material: THREE.ShaderMaterial } {
-  const bundleCount = quality === "default" ? 32 : 20;
+  const bundleCount = (quality === "default" ? 32 : 20) * OCEAN_LINE_DENSITY_SCALE;
   const strandCount = quality === "default" ? 3 : 2;
   const positions: number[] = [];
   const progresses: number[] = [];
@@ -606,7 +634,7 @@ function createConfluenceFlows(
       const strandBright = brightness * (0.88 + strand * 0.06);
       const path = flowField.trace(startX, startZ, {
         maxDistance: strandLength,
-        step: quality === "default" ? 3.2 : 4.8,
+        step: CONFLUENCE_TRACE_STEP[quality],
       });
 
       for (let index = 0; index < path.length - 1; index += 1) {
@@ -640,6 +668,7 @@ function createConfluenceFlows(
       uFlow: { value: 1 },
       uAmp: { value: 1 },
       uOpacity: { value: 0.15 },
+      uBloomPass: { value: 0 },
       uCore: { value: new THREE.Color(0xffdca2) },
       uFlowColor: { value: new THREE.Color(0xd99738) },
       uCrest: { value: new THREE.Color(0xfffaea) },
@@ -708,6 +737,8 @@ function createConfluenceFlows(
       }
     `,
     fragmentShader: `
+      uniform float uBloomPass;
+
       varying vec3 vColor;
       varying float vAlpha;
       varying float vTide;
@@ -716,8 +747,16 @@ function createConfluenceFlows(
       void main() {
         if (vAlpha <= 0.003) discard;
         float energy = vTide * 0.5 + vGlint * 1.4;
+        if (uBloomPass > 0.5) {
+          float bloomMask = clamp(vTide * 0.32 + vGlint * 1.2, 0.0, 1.0);
+          if (bloomMask <= 0.02) discard;
+          vec3 bloomColor = vec3(1.0, 0.94, 0.78) * (1.16 + bloomMask * 1.3);
+          gl_FragColor = vec4(bloomColor, vAlpha * bloomMask * 0.82);
+          return;
+        }
         vec3 color = mix(vColor, vec3(1.0, 0.96, 0.84), min(energy, 1.0) * 0.72);
-        gl_FragColor = vec4(color * (1.0 + vGlint * 1.2), vAlpha * (0.72 + energy));
+        color *= 0.72 + vGlint * 0.16;
+        gl_FragColor = vec4(color, vAlpha * (0.72 + energy));
       }
     `,
     transparent: true,
@@ -736,7 +775,10 @@ interface OceanMasterPath {
   path: OceanFlowPoint[];
   depth: number;
   bright: number;
-  hero: boolean;
+  // 0 = 单像素细丝；1 = 鎏金潮脊 ribbon；2 = 超级光刃 ribbon（更宽更亮）
+  tier: 0 | 1 | 2;
+  // 彗星流光的逐线相位偏移（部分去同步，保留宏观波前一致性）
+  cometSeed: number;
 }
 
 function buildOceanMasterPaths(
@@ -744,8 +786,8 @@ function buildOceanMasterPaths(
   quality: SceneQuality,
   flowField: OceanFlowField,
 ): OceanMasterPath[] {
-  const masterRowCount = quality === "default" ? 176 : 96;
-  const traceStep = quality === "default" ? 3.6 : 5.4;
+  const masterRowCount = (quality === "default" ? 176 : 96) * OCEAN_LINE_DENSITY_SCALE;
+  const traceStep = OCEAN_TRACE_STEP[quality];
   const zRange = SEA_Z_MAX - SEA_Z_MIN;
   const paths: OceanMasterPath[] = [];
 
@@ -764,9 +806,14 @@ function buildOceanMasterPaths(
       paths.push({
         path,
         depth,
-        bright: 0.22 + sample.density * 0.24 + random() * 0.11,
-        // 左右两侧交错取样，约 8% 的主流线成为宽潮脊。
-        hero: row % 12 === (side === -1 ? 2 : 8),
+        bright: 0.17 + sample.density * 0.2 + random() * 0.08,
+        // 左右两侧交错取样：约 2% 超级光刃 + 约 6.2% 鎏金潮脊。
+        tier: row % 56 === (side === -1 ? 5 : 37)
+          ? 2
+          : row % 16 === (side === -1 ? 2 : 10)
+            ? 1
+            : 0,
+        cometSeed: random(),
       });
     }
   }
@@ -783,10 +830,12 @@ function createOceanCrestRibbons(
   const potentials: number[] = [];
   const densities: number[] = [];
   const brights: number[] = [];
+  const tiers: number[] = [];
+  const cometSeeds: number[] = [];
   const indices: number[] = [];
 
   for (const master of masterPaths) {
-    if (!master.hero || master.path.length < 2) continue;
+    if (master.tier === 0 || master.path.length < 2) continue;
     const vertexBase = positions.length / 3;
     for (let index = 0; index < master.path.length; index += 1) {
       const point = master.path[index];
@@ -800,6 +849,8 @@ function createOceanCrestRibbons(
         potentials.push(point.potential);
         densities.push(point.density);
         brights.push(master.bright);
+        tiers.push(master.tier);
+        cometSeeds.push(master.cometSeed);
       }
       if (index < master.path.length - 1) {
         const offset = vertexBase + index * 2;
@@ -816,6 +867,8 @@ function createOceanCrestRibbons(
   geometry.setAttribute("aPotential", new THREE.Float32BufferAttribute(potentials, 1));
   geometry.setAttribute("aDensity", new THREE.Float32BufferAttribute(densities, 1));
   geometry.setAttribute("aBright", new THREE.Float32BufferAttribute(brights, 1));
+  geometry.setAttribute("aTier", new THREE.Float32BufferAttribute(tiers, 1));
+  geometry.setAttribute("aCometSeed", new THREE.Float32BufferAttribute(cometSeeds, 1));
   geometry.setIndex(indices);
 
   const material = new THREE.ShaderMaterial({
@@ -824,6 +877,7 @@ function createOceanCrestRibbons(
       uFlow: { value: 1 },
       uAmp: { value: 1 },
       uOpacity: { value: 0.5 },
+      uBloomPass: { value: 0 },
       uResolution: { value: new THREE.Vector2(1366, 768) },
       uPixelRatio: { value: 1 },
       uNear: { value: new THREE.Color(0xffd98a) },
@@ -840,11 +894,14 @@ function createOceanCrestRibbons(
       attribute float aPotential;
       attribute float aDensity;
       attribute float aBright;
+      attribute float aTier;
+      attribute float aCometSeed;
 
       uniform float uTime;
       uniform float uFlow;
       uniform float uAmp;
       uniform float uOpacity;
+      uniform float uBloomPass;
       uniform vec2 uResolution;
       uniform float uPixelRatio;
       uniform vec3 uNear;
@@ -859,6 +916,8 @@ function createOceanCrestRibbons(
       varying float vAcross;
       varying float vGlint;
       varying float vTide;
+      varying float vBlade;
+      varying float vComet;
 
       ${OCEAN_SURFACE_GLSL}
 
@@ -875,6 +934,7 @@ function createOceanCrestRibbons(
         float crest = smoothstep(4.5, 16.0, height);
         float valley = 1.0 - smoothstep(-5.0, 4.0, height);
         float tide = oceanTide(aPotential);
+        float comet = oceanComet(aPotential, aCometSeed);
 
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         vec4 clip = projectionMatrix * mv;
@@ -888,14 +948,18 @@ function createOceanCrestRibbons(
         tangent = normalize(tangent + vec2(0.00001, 0.0));
         vec2 screenNormal = vec2(-tangent.y, tangent.x);
 
-        float widthCss = mix(2.2, 3.5, aDensity)
-          + crest * 0.8
-          + tide * 0.7;
+        float blade = step(1.5, aTier);
+        // aSide 从中心线向两侧各偏移一次，因此这里明确使用 CSS 半宽。
+        float halfWidthCss = mix(
+          mix(1.5, 2.4, aDensity) + crest * 0.3 + tide * 0.3,
+          mix(3.0, 4.2, aDensity) + crest * 0.5 + tide * 0.4,
+          blade
+        );
         float horizonScale = mix(0.56, 1.0, 1.0 - smoothstep(uFade.x, uFade.y, -mv.z));
-        widthCss = min(5.0, widthCss) * horizonScale;
+        halfWidthCss = min(mix(3.0, 5.0, blade), halfWidthCss) * horizonScale;
         vec2 pixelOffset = screenNormal
           * aSide
-          * widthCss
+          * halfWidthCss
           * uPixelRatio
           * 2.0
           / max(uResolution, vec2(1.0));
@@ -913,21 +977,27 @@ function createOceanCrestRibbons(
         base = mix(base, uValley, valley * 0.22);
         base = mix(base, uFresnel, fresnel * (1.0 - crest) * 0.16);
         vColor = mix(base, uCrest, crest * 0.72 + glint * 0.82)
-          * (0.78 + aBright * 0.62);
+          * (0.78 + aBright * 0.62 + blade * 0.5);
         vAlpha = uOpacity
           * (1.0 - smoothstep(uFade.x, uFade.y, -mv.z))
-          * (0.62 + crest * 0.42 + tide * 0.3);
+          * (0.62 + crest * 0.42 + tide * 0.3 + blade * 0.1);
         vAcross = aSide;
         vGlint = glint;
         vTide = tide;
+        vBlade = blade;
+        vComet = comet;
       }
     `,
     fragmentShader: `
+      uniform float uBloomPass;
+
       varying vec3 vColor;
       varying float vAlpha;
       varying float vAcross;
       varying float vGlint;
       varying float vTide;
+      varying float vBlade;
+      varying float vComet;
 
       void main() {
         float across = abs(vAcross);
@@ -936,8 +1006,20 @@ function createOceanCrestRibbons(
         float alpha = vAlpha * (halo * 0.34 + core * (0.76 + vTide * 0.34));
         if (alpha <= 0.003) discard;
         vec3 whiteGold = vec3(1.0, 0.97, 0.88);
-        vec3 color = mix(vColor, whiteGold, core * (0.48 + vGlint * 0.52));
-        color *= 1.0 + core * (vTide * 0.52 + vGlint * 1.8);
+        if (uBloomPass > 0.5) {
+          float tierEnergy = mix(1.12, 3.0, vBlade);
+          float bloomMask = core * (0.42 + vBlade * 0.46 + vComet * 0.72);
+          if (bloomMask <= 0.02) discard;
+          vec3 bloomColor = whiteGold * (tierEnergy + vComet * 1.1 + vGlint * 0.8);
+          gl_FragColor = vec4(bloomColor, bloomMask * mix(0.08, 0.22, vBlade));
+          return;
+        }
+        vec3 color = mix(
+          vColor,
+          whiteGold,
+          core * (0.42 + vGlint * 0.24 + vBlade * 0.12 + vComet * 0.44)
+        );
+        color *= 0.32 + core * 0.1 + vComet * 0.04;
         gl_FragColor = vec4(color, alpha);
       }
     `,
@@ -960,9 +1042,9 @@ function createFlowingOcean(
   flowField: OceanFlowField,
   masterPaths: OceanMasterPath[],
 ): { object: THREE.LineSegments; material: THREE.ShaderMaterial } {
-  const detailColumns = quality === "default" ? 88 : 50;
+  const detailColumns = (quality === "default" ? 88 : 50) * OCEAN_LINE_DENSITY_SCALE;
   const detailRows = quality === "default" ? 70 : 40;
-  const traceStep = quality === "default" ? 3.6 : 5.4;
+  const traceStep = OCEAN_TRACE_STEP[quality];
   const xMin = flowField.bounds.minX;
   const width = flowField.bounds.maxX - flowField.bounds.minX;
   const zRange = SEA_Z_MAX - SEA_Z_MIN;
@@ -972,6 +1054,7 @@ function createFlowingOcean(
   const depths: number[] = [];
   const layers: number[] = [];
   const potentials: number[] = [];
+  const cometSeeds: number[] = [];
 
   const offsetPoint = (point: OceanFlowPoint, offset: number, depth: number) => {
     if (offset === 0) {
@@ -996,6 +1079,7 @@ function createFlowingOcean(
     depth: number,
     bright: number,
     layer: number,
+    cometSeed: number,
   ) => {
     const a = offsetPoint(start, offset, depth);
     const b = offsetPoint(end, offset, depth);
@@ -1004,6 +1088,7 @@ function createFlowingOcean(
     depths.push(depth, depth);
     layers.push(layer, layer);
     potentials.push(start.potential, end.potential);
+    cometSeeds.push(cometSeed, cometSeed);
   };
 
   const appendPath = (
@@ -1012,6 +1097,7 @@ function createFlowingOcean(
     depth: number,
     bright: number,
     layer: number,
+    cometSeed: number,
   ) => {
     for (let index = 0; index < path.length - 1; index += 1) {
       appendSegment(
@@ -1021,13 +1107,14 @@ function createFlowingOcean(
         depth,
         bright,
         layer,
+        cometSeed,
       );
     }
   };
 
   // Sparse full-length streamlines reveal the large-scale current without making a net.
   for (const master of masterPaths) {
-    appendPath(master.path, 0, master.depth, master.bright, 0);
+    appendPath(master.path, 0, master.depth, master.bright, 0, master.cometSeed);
   }
 
   // Thousands of short, stratified traces provide fiber density. Every segment is
@@ -1057,10 +1144,10 @@ function createFlowingOcean(
       const path = [...backward.reverse(), ...forward.slice(1)];
       const familySize = random() < 0.16 ? 2 : 1;
       const depth = random() < 0.1 ? 0.018 + random() * 0.07 : random() * 0.012;
-      const bright = 0.45 + flow.density * 0.34 + random() * 0.28;
+      const bright = 0.32 + flow.density * 0.22 + random() * 0.16;
       for (let strand = 0; strand < familySize; strand += 1) {
         const offset = familySize === 1 ? 0 : (strand - 0.5) * 0.72;
-        appendPath(path, offset, depth, bright * (0.94 + strand * 0.06), 1);
+        appendPath(path, offset, depth, bright * (0.94 + strand * 0.06), 1, 0);
       }
     }
   }
@@ -1071,6 +1158,7 @@ function createFlowingOcean(
   geometry.setAttribute("aDepth", new THREE.Float32BufferAttribute(depths, 1));
   geometry.setAttribute("aLayer", new THREE.Float32BufferAttribute(layers, 1));
   geometry.setAttribute("aPotential", new THREE.Float32BufferAttribute(potentials, 1));
+  geometry.setAttribute("aCometSeed", new THREE.Float32BufferAttribute(cometSeeds, 1));
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -1078,6 +1166,7 @@ function createFlowingOcean(
       uFlow: { value: 1 },
       uAmp: { value: 1 },
       uOpacity: { value: 0.24 },
+      uBloomPass: { value: 0 },
       // 金色光海：谷底深金、脊面亮金、波峰近乎白金；沉入未来时转为冷暗。
       uNear: { value: new THREE.Color(0xffd98a) },
       uFar: { value: new THREE.Color(0xb07f2e) },
@@ -1094,11 +1183,13 @@ function createFlowingOcean(
       attribute float aDepth;
       attribute float aLayer;
       attribute float aPotential;
+      attribute float aCometSeed;
 
       uniform float uTime;
       uniform float uFlow;
       uniform float uAmp;
       uniform float uOpacity;
+      uniform float uBloomPass;
       uniform vec3 uNear;
       uniform vec3 uFar;
       uniform vec3 uCrest;
@@ -1113,6 +1204,7 @@ function createFlowingOcean(
       varying float vTide;
       varying float vGlint;
       varying float vLayer;
+      varying float vComet;
 
       ${OCEAN_SURFACE_GLSL}
 
@@ -1133,6 +1225,7 @@ function createFlowingOcean(
         float crest = smoothstep(5.0, 17.0, h);
         float valley = 1.0 - smoothstep(-5.0, 4.0, h);
         float tide = oceanTide(aPotential);
+        float comet = (1.0 - aLayer) * oceanComet(aPotential, aCometSeed);
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         vec3 normalView = normalize(normalMatrix * surfaceNormal);
         vec3 viewDirection = normalize(-mv.xyz);
@@ -1159,26 +1252,41 @@ function createFlowingOcean(
           * horizonFade
           * depthFade
           * mix(0.16 + crest * 0.38, 0.6 + crest * 0.84, aLayer)
-          * (1.0 + tide * mix(0.12, 0.36, aLayer));
+          * (1.0 + tide * mix(0.06, 0.18, aLayer));
         vTide = tide;
         vGlint = glint;
         vLayer = aLayer;
+        vComet = comet;
         gl_Position = projectionMatrix * mv;
       }
     `,
     fragmentShader: `
+      uniform float uBloomPass;
+
       varying vec3 vColor;
       varying float vAlpha;
       varying float vTide;
       varying float vGlint;
       varying float vLayer;
+      varying float vComet;
 
       void main() {
         if (vAlpha <= 0.003) discard;
-        float pulseStrength = mix(0.16, 0.82, vLayer) * vTide;
+        if (uBloomPass > 0.5) {
+          if (vComet <= 0.02) discard;
+          float cometHead = smoothstep(0.68, 1.0, vComet);
+          vec3 bloomColor = vec3(1.0, 0.96, 0.84) * (1.18 + cometHead * 2.72);
+          gl_FragColor = vec4(bloomColor, vComet * (0.16 + cometHead * 0.14));
+          return;
+        }
+        float pulseStrength = mix(0.08, 0.41, vLayer) * vTide;
         vec3 color = mix(vColor, vec3(1.0, 0.95, 0.82), pulseStrength * 0.5);
-        color *= 1.0 + vGlint * 1.25;
-        gl_FragColor = vec4(color, vAlpha * (1.0 + pulseStrength + vGlint * 0.55));
+        color = mix(color, vec3(1.0, 0.96, 0.84), vComet * 0.68);
+        color *= 0.72 + vGlint * 0.16 + vComet * 0.12;
+        gl_FragColor = vec4(
+          color,
+          vAlpha * (1.0 + pulseStrength + vGlint * 0.28 + vComet * 0.72)
+        );
       }
     `,
     transparent: true,
@@ -1189,6 +1297,7 @@ function createFlowingOcean(
   const object = new THREE.LineSegments(geometry, material);
   object.renderOrder = 2;
   object.frustumCulled = false;
+  object.layers.enable(OCEAN_BLOOM_LAYER);
   return { object, material };
 }
 
@@ -1231,7 +1340,7 @@ function createSeaFoam(
     lifePhases[index] = random();
     lifeRates[index] = 1 / (3200 + random() * 3600);
     const sizeRank = random();
-    sizeClasses[index] = sizeRank < 0.005 ? 2 : sizeRank < 0.08 ? 1 : 0;
+    sizeClasses[index] = sizeRank < 0.015 ? 2 : sizeRank < 0.115 ? 1 : 0;
     crestPulls[index] = 0.35 + random() * 0.65;
     // 极少量短垂光保留海面纵深，不再形成大面积根系状悬丝。
     drips[index] = random() < 0.045 ? Math.pow(random(), 1.7) * 22 : 0;
@@ -1255,6 +1364,9 @@ function createSeaFoam(
       uAmp: { value: 1 },
       uOpacity: { value: 0.7 },
       uSize: { value: quality === "default" ? 1.7 : 1.9 },
+      uMaxPointSize: { value: quality === "default" ? 16 : 10 },
+      uStarRays: { value: quality === "default" ? 1 : 0 },
+      uBloomPass: { value: 0 },
       // 金色浪花：海面亮金，远处深金，波峰白金。
       uNear: { value: new THREE.Color(0xffe19a) },
       uFar: { value: new THREE.Color(0xc08a38) },
@@ -1280,6 +1392,9 @@ function createSeaFoam(
       uniform float uAmp;
       uniform float uOpacity;
       uniform float uSize;
+      uniform float uMaxPointSize;
+      uniform float uStarRays;
+      uniform float uBloomPass;
       uniform vec3 uNear;
       uniform vec3 uFar;
       uniform vec3 uCrest;
@@ -1292,6 +1407,7 @@ function createSeaFoam(
       varying float vAlpha;
       varying float vSizeClass;
       varying float vCoreEnergy;
+      varying float vRotation;
 
       ${OCEAN_SURFACE_GLSL}
 
@@ -1334,15 +1450,21 @@ function createSeaFoam(
         base = mix(base, uFresnel, fresnel * (1.0 - crest) * 0.16);
         vColor = mix(base, uCrest, crest * 0.8 + glint * 0.85) * min(aBright, 1.12);
         float age = fract(aLifePhase + uTime * aLifeRate * uFlow);
-        float life = smoothstep(0.0, 0.16, age)
+        float slowLife = smoothstep(0.0, 0.16, age)
           * (1.0 - smoothstep(0.42, 1.0, age));
+        float preGlow = smoothstep(0.0, 0.58, age)
+          * (1.0 - smoothstep(0.82, 1.0, age));
+        float flash = smoothstep(0.56, 0.66, age)
+          * (1.0 - smoothstep(0.72, 0.84, age));
+        float sparkLife = 0.12 + preGlow * 0.34 + flash * 1.08;
+        float life = mix(slowLife, sparkLife, step(0.5, aSizeClass));
         float staticLife = 0.56 + aLifePhase * 0.34;
         life = mix(staticLife, life, uFlow);
         float sizeMultiplier = aSizeClass < 0.5
           ? mix(0.7, 1.2, aLifePhase)
           : aSizeClass < 1.5
             ? mix(1.4, 2.1, aLifePhase)
-            : mix(2.4, 3.0, aLifePhase);
+            : mix(3.0, 4.2, aLifePhase);
         // 视距淡出：远处渐隐至零，浪花没入黑暗，与丝线海协同形成无际地平。
         float horizonFade = 1.0 - smoothstep(uFade.x, uFade.y, -mv.z);
         float crestEnergy = 0.06 + crest * (0.84 + aDensity * 0.34);
@@ -1354,6 +1476,8 @@ function createSeaFoam(
           * (1.0 + tide * 0.42);
         vSizeClass = aSizeClass;
         vCoreEnergy = min(1.8, 0.18 + tide * 0.28 + glint * 0.82 + aSizeClass * 0.42);
+        vRotation = aLifePhase * 6.2831853
+          + uTime * mix(0.000314, 0.000524, aLifePhase) * uFlow;
         gl_Position = projectionMatrix * mv;
         gl_PointSize = clamp(
           uSize
@@ -1361,18 +1485,25 @@ function createSeaFoam(
           * (1.0 + crest * 0.62 + tide * 0.25)
           * (300.0 / max(1.0, -mv.z)),
           0.6,
-          10.0
+          uMaxPointSize
         );
       }
     `,
     fragmentShader: `
+      uniform float uStarRays;
+      uniform float uBloomPass;
+
       varying vec3 vColor;
       varying float vAlpha;
       varying float vSizeClass;
       varying float vCoreEnergy;
+      varying float vRotation;
 
       void main() {
         vec2 uv = gl_PointCoord - vec2(0.5);
+        float rotationCos = cos(vRotation);
+        float rotationSin = sin(vRotation);
+        uv = mat2(rotationCos, -rotationSin, rotationSin, rotationCos) * uv;
         float distanceToCenter = length(uv);
         float core = 1.0 - smoothstep(0.04, 0.15, distanceToCenter);
         float halo = 1.0 - smoothstep(0.15, 0.5, distanceToCenter);
@@ -1381,13 +1512,20 @@ function createSeaFoam(
         float verticalRay = (1.0 - smoothstep(0.025, 0.11, abs(uv.x)))
           * (1.0 - smoothstep(0.12, 0.5, abs(uv.y)));
         float focus = smoothstep(1.5, 2.0, vSizeClass);
-        float rays = max(horizontalRay, verticalRay) * focus * 0.34;
+        float rays = max(horizontalRay, verticalRay) * focus * 0.34 * uStarRays;
         float alpha = (halo * 0.34 + core * 0.9 + rays) * vAlpha;
         if (alpha <= 0.003) discard;
         vec3 whiteGold = vec3(1.0, 0.97, 0.88);
+        if (uBloomPass > 0.5) {
+          float bloomMask = core * focus;
+          if (bloomMask <= 0.02) discard;
+          vec3 bloomColor = whiteGold * (1.18 + vCoreEnergy * 1.45);
+          gl_FragColor = vec4(bloomColor, bloomMask * 0.32);
+          return;
+        }
         vec3 color = mix(vColor, whiteGold, core * 0.68 + rays * 0.28);
-        color *= 1.0 + core * vCoreEnergy + rays * 0.56;
-        gl_FragColor = vec4(color, alpha);
+        color *= 0.58 + core * 0.28 + rays * 0.1;
+        gl_FragColor = vec4(color, min(alpha, 0.52));
       }
     `,
     transparent: true,
@@ -1729,6 +1867,12 @@ export function createHistoryVisuals(options: {
     "person-focus": 0.18,
     "relation-focus": 0.14,
   };
+  const oceanBloomMaterials = [
+    flowingOcean.material,
+    crestRibbons.material,
+    confluenceFlows.material,
+    seaFoam.material,
+  ];
 
   return {
     root,
@@ -1747,15 +1891,18 @@ export function createHistoryVisuals(options: {
       flowingOcean.material.uniforms.uTime.value = now;
       flowingOcean.material.uniforms.uFlow.value = oceanFlow;
       flowingOcean.material.uniforms.uAmp.value = oceanAmp;
-      flowingOcean.material.uniforms.uOpacity.value = 0.36 * visibility;
+      flowingOcean.material.uniforms.uOpacity.value =
+        0.28 * OCEAN_LINE_BRIGHTNESS_GAIN * visibility;
       crestRibbons.material.uniforms.uTime.value = now;
       crestRibbons.material.uniforms.uFlow.value = oceanFlow;
       crestRibbons.material.uniforms.uAmp.value = oceanAmp;
-      crestRibbons.material.uniforms.uOpacity.value = (lowMotion ? 0.34 : 0.5) * visibility;
+      crestRibbons.material.uniforms.uOpacity.value =
+        (lowMotion ? 0.34 : 0.5) * OCEAN_LINE_BRIGHTNESS_GAIN * visibility;
       confluenceFlows.material.uniforms.uTime.value = now;
       confluenceFlows.material.uniforms.uFlow.value = oceanFlow;
       confluenceFlows.material.uniforms.uAmp.value = oceanAmp;
-      confluenceFlows.material.uniforms.uOpacity.value = 0.15 * visibility;
+      confluenceFlows.material.uniforms.uOpacity.value =
+        0.15 * OCEAN_LINE_BRIGHTNESS_GAIN * visibility;
       seaFoam.material.uniforms.uTime.value = now;
       seaFoam.material.uniforms.uFlow.value = oceanFlow;
       seaFoam.material.uniforms.uAmp.value = oceanAmp;
@@ -1789,6 +1936,12 @@ export function createHistoryVisuals(options: {
       );
       crestRibbons.material.uniforms.uPixelRatio.value = pixelRatio;
     },
+    setOceanBloomPass(active) {
+      const value = active ? 1 : 0;
+      for (const material of oceanBloomMaterials) {
+        material.uniforms.uBloomPass.value = value;
+      }
+    },
     dispose() {
       cloudTexture.dispose();
       radialTexture.dispose();
@@ -1801,6 +1954,7 @@ export function createHistoryPostProcessing(
   scene: THREE.Scene,
   camera: THREE.Camera,
   quality: SceneQuality,
+  setOceanBloomPass: (active: boolean) => void,
 ): HistoryPostProcessing {
   const composer = new EffectComposer(renderer);
   composer.setPixelRatio(renderer.getPixelRatio());
@@ -1866,9 +2020,14 @@ export function createHistoryPostProcessing(
     render() {
       if (oceanBloomComposer) {
         const cameraLayerMask = camera.layers.mask;
-        camera.layers.set(OCEAN_BLOOM_LAYER);
-        oceanBloomComposer.render();
-        camera.layers.mask = cameraLayerMask;
+        try {
+          setOceanBloomPass(true);
+          camera.layers.set(OCEAN_BLOOM_LAYER);
+          oceanBloomComposer.render();
+        } finally {
+          camera.layers.mask = cameraLayerMask;
+          setOceanBloomPass(false);
+        }
       }
       composer.render();
     },
