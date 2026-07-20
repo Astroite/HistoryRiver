@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as THREE from "three";
 
 import {
@@ -12,10 +12,18 @@ import {
   createHistoryVisuals,
   type HistoryVisualComponent,
 } from "@/app/history-river-visuals";
+import {
+  createPersonThreadRig,
+  derivationLabel,
+  summarizePersonEvidence,
+  type PersonIsolationMode,
+  type PersonThreadLayer,
+  type PersonThreadLayerVisibility,
+  type PersonThreadRig,
+} from "@/app/history-person-threads";
 import renderData from "@/data/history/generated/render-data.json";
 import {
   RIVER_START_YEAR,
-  buildRenderPersonThreadGeometry,
   historicalYearToY,
   type RenderHistoryDataset,
 } from "@/lib/history/model";
@@ -99,15 +107,65 @@ function getServerDebugModeSnapshot() {
   return false;
 }
 
+const DEFAULT_THREAD_LAYER_VISIBILITY: PersonThreadLayerVisibility = {
+  life: true,
+  evidence: true,
+  anchors: true,
+};
+
+const THREAD_LAYER_LABELS: Array<{ id: PersonThreadLayer; label: string }> = [
+  { id: "life", label: "生命时间线（含地点未知年份）" },
+  { id: "evidence", label: "有据地点段" },
+  { id: "anchors", label: "证据节点" },
+];
+
+function formatHistoricalYear(year: number | null): string {
+  if (year === null) return "未知";
+  return year < 0 ? `公元前 ${Math.abs(year)} 年` : `公元 ${year} 年`;
+}
+
 function HistoryDebugMenu({
   visibility,
   onChange,
   onSetAll,
+  selectedPersonIndex,
+  onSelectPerson,
+  isolationMode,
+  onIsolationModeChange,
+  threadLayers,
+  onThreadLayerChange,
+  onFocusPerson,
 }: {
   visibility: ComponentVisibility;
   onChange: (component: DebugComponent, visible: boolean) => void;
   onSetAll: (visible: boolean) => void;
+  selectedPersonIndex: number | null;
+  onSelectPerson: (personIndex: number | null) => void;
+  isolationMode: PersonIsolationMode;
+  onIsolationModeChange: (mode: PersonIsolationMode) => void;
+  threadLayers: PersonThreadLayerVisibility;
+  onThreadLayerChange: (layer: PersonThreadLayer, visible: boolean) => void;
+  onFocusPerson: () => void;
 }) {
+  const [personFilter, setPersonFilter] = useState("");
+  const selectedPerson = selectedPersonIndex === null
+    ? null
+    : historyData.people[selectedPersonIndex];
+  const normalizedFilter = personFilter.trim().toLocaleLowerCase("zh-CN");
+  const filteredPeople = historyData.people
+    .map((person, index) => ({ person, index }))
+    .filter(({ person, index }) =>
+      normalizedFilter.length === 0
+      || index === selectedPersonIndex
+      || person.canonicalName.toLocaleLowerCase("zh-CN").includes(normalizedFilter)
+      || person.id.toLowerCase().includes(normalizedFilter));
+  const evidence = useMemo(
+    () => selectedPersonIndex === null
+      ? []
+      : summarizePersonEvidence(historyData, selectedPersonIndex),
+    [selectedPersonIndex],
+  );
+
   return (
     <aside className="history-debug-menu" aria-label="调试菜单">
       <header className="history-debug-header">
@@ -122,6 +180,110 @@ function HistoryDebugMenu({
           全部隐藏
         </button>
       </div>
+      <section className="history-person-debug" aria-labelledby="history-person-debug-title">
+        <h3 id="history-person-debug-title">单人物调试</h3>
+        <label className="history-debug-field">
+          <span>搜索人物</span>
+          <input
+            type="search"
+            value={personFilter}
+            placeholder="中文姓名或 ID"
+            onChange={(event) => setPersonFilter(event.currentTarget.value)}
+          />
+        </label>
+        <label className="history-debug-field">
+          <span>当前人物</span>
+          <select
+            value={selectedPersonIndex ?? ""}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              onSelectPerson(value === "" ? null : Number(value));
+            }}
+          >
+            <option value="">未选择</option>
+            {filteredPeople.map(({ person, index }) => (
+              <option key={person.id} value={index}>
+                {person.canonicalName} · {person.id}
+              </option>
+            ))}
+          </select>
+        </label>
+        {selectedPerson ? (
+          <>
+            <div className="history-person-summary">
+              <strong>{selectedPerson.canonicalName}</strong>
+              <span>{selectedPerson.id}</span>
+              <span>
+                轨迹：{formatHistoricalYear(selectedPerson.trajectoryStartYear)}—
+                {formatHistoricalYear(selectedPerson.trajectoryEndYear)}
+              </span>
+              <span>
+                生卒：{formatHistoricalYear(selectedPerson.birthYear)}—
+                {formatHistoricalYear(selectedPerson.deathYear)}
+              </span>
+            </div>
+            <div className="history-debug-segmented" role="group" aria-label="人物隔离模式">
+              <button
+                type="button"
+                aria-pressed={isolationMode === "dim"}
+                onClick={() => onIsolationModeChange("dim")}
+              >
+                弱化其他人物
+              </button>
+              <button
+                type="button"
+                aria-pressed={isolationMode === "isolate"}
+                onClick={() => onIsolationModeChange("isolate")}
+              >
+                仅显示此人物
+              </button>
+            </div>
+            <button type="button" className="history-debug-focus" onClick={onFocusPerson}>
+              镜头定位到此人物
+            </button>
+            <fieldset className="history-debug-group history-thread-layers">
+              <legend>人物轨迹图层</legend>
+              {THREAD_LAYER_LABELS.map((item) => (
+                <label key={item.id} className="history-debug-toggle">
+                  <span>{item.label}</span>
+                  <input
+                    type="checkbox"
+                    checked={threadLayers[item.id]}
+                    onChange={(event) =>
+                      onThreadLayerChange(item.id, event.currentTarget.checked)}
+                  />
+                </label>
+              ))}
+            </fieldset>
+            <div className="history-evidence-list">
+              <h4>地点证据 · {evidence.length}</h4>
+              {evidence.length > 0 ? (
+                <ol>
+                  {evidence.map((item) => (
+                    <li key={item.evidenceSpanIndex}>
+                      <strong>{item.locationLabel}</strong>
+                      <span>
+                        {formatHistoricalYear(item.startYear)}
+                        {item.endYear === item.startYear
+                          ? ""
+                          : `—${formatHistoricalYear(item.endYear)}`}
+                      </span>
+                      <span>
+                        {derivationLabel(item.derivation)} · 不确定度
+                        {Math.round(item.uncertainty * 100)}%
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p>该人物暂无有据地点，仅显示生命时间线。</p>
+              )}
+            </div>
+          </>
+        ) : (
+          <p className="history-debug-empty">选择人物后可隔离、高亮并查看地点证据。</p>
+        )}
+      </section>
       {DEBUG_COMPONENT_GROUPS.map((group) => (
         <fieldset key={group.label} className="history-debug-group">
           <legend>{group.label}</legend>
@@ -170,81 +332,10 @@ function disposeScene(scene: THREE.Scene) {
   });
 }
 
-function createPersonThreads(data: RenderHistoryDataset): {
-  object: THREE.LineSegments;
-  material: THREE.ShaderMaterial;
-} {
-  const threadData = buildRenderPersonThreadGeometry(data);
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(threadData.positions, 3));
-  geometry.setAttribute("aColor", new THREE.BufferAttribute(threadData.colors, 3));
-  geometry.setAttribute("aAlpha", new THREE.BufferAttribute(threadData.alpha, 1));
-  geometry.setAttribute(
-    "aPersonIndex",
-    new THREE.BufferAttribute(threadData.personIndices, 1),
-  );
-  geometry.setAttribute("aYearIndex", new THREE.BufferAttribute(threadData.yearIndices, 1));
-
-  const material = new THREE.ShaderMaterial({
-    uniforms: {
-      uTime: { value: 0 },
-      uFlow: { value: 1 },
-      uOpacity: { value: 0.7 },
-    },
-    vertexShader: `
-      attribute vec3 aColor;
-      attribute float aAlpha;
-      attribute float aPersonIndex;
-      attribute float aYearIndex;
-
-      varying vec3 vColor;
-      varying float vAlpha;
-      varying float vPhase;
-
-      void main() {
-        vColor = aColor;
-        vAlpha = aAlpha;
-        vPhase = fract(aYearIndex * 0.011 + aPersonIndex * 0.071);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform float uTime;
-      uniform float uFlow;
-      uniform float uOpacity;
-
-      varying vec3 vColor;
-      varying float vAlpha;
-      varying float vPhase;
-
-      void main() {
-        float flowPhase = fract(vPhase - uTime * 0.000035 * uFlow);
-        float glint = smoothstep(0.0, 0.045, flowPhase)
-          * (1.0 - smoothstep(0.045, 0.16, flowPhase));
-        vec3 celestial = vec3(0.53, 0.66, 0.76);
-        vec3 color = mix(celestial, vColor, 0.48);
-        color = mix(color, vec3(0.94, 0.84, 0.65), glint * 0.38);
-        float alpha = uOpacity * vAlpha * (0.58 + glint * 0.72);
-        if (alpha <= 0.004) discard;
-        gl_FragColor = vec4(color, alpha);
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.NormalBlending,
-  });
-  const object = new THREE.LineSegments(geometry, material);
-  object.renderOrder = 3;
-  object.frustumCulled = false;
-  object.userData.datasetVersion = data.manifest.version;
-  object.userData.personCount = data.manifest.personCount;
-  object.userData.personYearCount = data.manifest.personYearCount;
-  object.userData.ranges = threadData.ranges;
-  return { object, material };
-}
-
 export function HistoryRiver() {
   const mountRef = useRef<HTMLDivElement>(null);
+  const personThreadRigRef = useRef<PersonThreadRig | null>(null);
+  const focusPersonRef = useRef<(personIndex: number) => void>(() => undefined);
   const sceneComponentsRef = useRef<
     Partial<Record<SceneDebugComponent, THREE.Object3D>>
   >({});
@@ -255,6 +346,11 @@ export function HistoryRiver() {
   );
   const [componentVisibility, setComponentVisibility] = useState(
     createDefaultComponentVisibility,
+  );
+  const [selectedPersonIndex, setSelectedPersonIndex] = useState<number | null>(null);
+  const [isolationMode, setIsolationMode] = useState<PersonIsolationMode>("dim");
+  const [threadLayerVisibility, setThreadLayerVisibility] = useState(
+    DEFAULT_THREAD_LAYER_VISIBILITY,
   );
 
   useEffect(() => {
@@ -326,12 +422,26 @@ export function HistoryRiver() {
     riverGroup.add(visuals.root);
     const geography = createHistoryGeography();
     riverGroup.add(geography.root);
-    const personThreads = createPersonThreads(historyData);
-    riverGroup.add(personThreads.object);
+    const personThreads = createPersonThreadRig(historyData);
+    personThreadRigRef.current = personThreads;
+    riverGroup.add(personThreads.root);
     sceneComponentsRef.current = {
       ...visuals.components,
       ...geography.components,
-      personThreads: personThreads.object,
+      personThreads: personThreads.root,
+    };
+    focusPersonRef.current = (personIndex) => {
+      const bounds = personThreads.getPersonBounds(personIndex);
+      if (!bounds) return;
+      const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+      const verticalFov = THREE.MathUtils.degToRad(camera.fov);
+      const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect);
+      const limitingFov = Math.min(verticalFov, horizontalFov);
+      const distance = Math.max(
+        8,
+        sphere.radius / Math.max(0.1, Math.sin(limitingFov / 2)) * 1.25,
+      );
+      cameraControls.focusTargetAt(sphere.center, distance);
     };
 
     const postProcessing = createHistoryPostProcessing(
@@ -362,6 +472,7 @@ export function HistoryRiver() {
       renderer.setSize(rect.width, rect.height, false);
       postProcessing.resize(rect.width, rect.height);
       visuals.resize(rect.width, rect.height, renderer.getPixelRatio());
+      personThreads.resize(rect.width, rect.height);
     };
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(mount);
@@ -379,8 +490,7 @@ export function HistoryRiver() {
       cameraControls.update(deltaSeconds);
       geography.update(now, lowMotion);
       visuals.update(now, lowMotion);
-      personThreads.material.uniforms.uTime.value = lowMotion ? 0 : now;
-      personThreads.material.uniforms.uFlow.value = lowMotion ? 0 : 1;
+      personThreads.update(now, lowMotion);
       postProcessing.render();
       if (diagnostics) {
         diagnostics.render = { ...renderer.info.render };
@@ -397,10 +507,13 @@ export function HistoryRiver() {
         delete window.__historyRiverDiagnostics;
       }
       visuals.dispose();
+      personThreads.dispose();
       postProcessing.dispose();
       disposeScene(scene);
       renderer.dispose();
       renderer.domElement.remove();
+      personThreadRigRef.current = null;
+      focusPersonRef.current = () => undefined;
       sceneComponentsRef.current = {};
     };
   }, []);
@@ -412,6 +525,18 @@ export function HistoryRiver() {
       if (object) object.visible = visible;
     }
   }, [componentVisibility]);
+
+  useEffect(() => {
+    personThreadRigRef.current?.setSelection(selectedPersonIndex);
+  }, [selectedPersonIndex]);
+
+  useEffect(() => {
+    personThreadRigRef.current?.setIsolationMode(isolationMode);
+  }, [isolationMode]);
+
+  useEffect(() => {
+    personThreadRigRef.current?.setLayerVisibility(threadLayerVisibility);
+  }, [threadLayerVisibility]);
 
   const changeComponentVisibility = (
     component: DebugComponent,
@@ -433,6 +558,13 @@ export function HistoryRiver() {
     });
   };
 
+  const changeThreadLayerVisibility = (
+    layer: PersonThreadLayer,
+    visible: boolean,
+  ) => {
+    setThreadLayerVisibility((current) => ({ ...current, [layer]: visible }));
+  };
+
   return (
     <main className="history-shell">
       <div ref={mountRef} className="history-stage" />
@@ -446,6 +578,15 @@ export function HistoryRiver() {
           visibility={componentVisibility}
           onChange={changeComponentVisibility}
           onSetAll={setAllComponentsVisible}
+          selectedPersonIndex={selectedPersonIndex}
+          onSelectPerson={setSelectedPersonIndex}
+          isolationMode={isolationMode}
+          onIsolationModeChange={setIsolationMode}
+          threadLayers={threadLayerVisibility}
+          onThreadLayerChange={changeThreadLayerVisibility}
+          onFocusPerson={() => {
+            if (selectedPersonIndex !== null) focusPersonRef.current(selectedPersonIndex);
+          }}
         />
       ) : null}
     </main>

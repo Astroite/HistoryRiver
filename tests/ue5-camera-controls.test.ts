@@ -161,6 +161,9 @@ test("supports look, pan, pivot orbit, pivot dolly, wheel travel, and artwork fo
   wheel.controls.focusArtwork();
   assertVectorClose(wheel.controls.pivot, new THREE.Vector3());
   assert.ok(Math.abs(wheel.camera.position.distanceTo(wheel.controls.pivot) - 10) < 1e-7);
+  wheel.controls.focusTargetAt(new THREE.Vector3(4, 8, -2), 24);
+  assertVectorClose(wheel.controls.pivot, new THREE.Vector3(4, 8, -2));
+  assert.ok(Math.abs(wheel.camera.position.distanceTo(wheel.controls.pivot) - 24) < 1e-7);
   wheel.controls.dispose();
 });
 

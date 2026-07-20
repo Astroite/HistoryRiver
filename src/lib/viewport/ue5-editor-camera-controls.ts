@@ -238,11 +238,20 @@ export class UE5EditorCameraControls {
   }
 
   focusArtwork(): void {
+    this.focusTargetAt(this.focusTarget, this.focusDistance);
+  }
+
+  focusTargetAt(target: THREE.Vector3, distance: number): void {
     const forward = this.camera.getWorldDirection(new THREE.Vector3());
-    this.pivot.copy(this.focusTarget);
-    this.camera.position.copy(this.pivot).addScaledVector(forward, -this.focusDistance);
+    const clampedDistance = THREE.MathUtils.clamp(
+      distance,
+      this.minOrbitDistance,
+      this.maxOrbitDistance,
+    );
+    this.pivot.copy(target);
+    this.camera.position.copy(this.pivot).addScaledVector(forward, -clampedDistance);
     this.camera.lookAt(this.pivot);
-    this.orbitDistance = this.focusDistance;
+    this.orbitDistance = clampedDistance;
   }
 
   dispose(): void {

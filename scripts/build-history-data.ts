@@ -6,6 +6,7 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import {
+  buildRenderHistoryDataset,
   materializeAnnualHistoryDataset,
   type AnnualHistoryDataset,
   type DatasetManifest,
@@ -167,27 +168,7 @@ async function expectedArtifacts(raw: RawHistoryDataset, annual: AnnualHistoryDa
     people: annual.people,
     personYears: annual.personYears,
   };
-  const personIndex = new Map(annual.people.map((person, index) => [person.id, index]));
-  const renderData = {
-    manifest: {
-      version: annual.manifest.version,
-      personCount: annual.manifest.personCount,
-      personYearCount: annual.manifest.personYearCount,
-    },
-    people: annual.people.map((person) => ({
-      id: person.id,
-      domain: person.domains[0] ?? "culture",
-      visualWeight: person.visualWeight,
-    })),
-    personYears: annual.personYears.map((record) => [
-      personIndex.get(record.personId),
-      record.historicalYear,
-      record.yearIndex,
-      record.location?.position[0] ?? null,
-      record.location?.position[1] ?? null,
-      record.uncertainty,
-    ]),
-  };
+  const renderData = buildRenderHistoryDataset(annual);
   const slices = {
     datasetVersion: annual.manifest.version,
     startYear: annual.manifest.startYear,

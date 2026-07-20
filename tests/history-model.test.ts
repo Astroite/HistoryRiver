@@ -12,6 +12,7 @@ import {
 } from "../src/lib/history/geography-volume.ts";
 import {
   buildPersonThreadGeometry,
+  buildRenderHistoryDataset,
   historicalYearCount,
   historicalYears,
   historicalYearToIndex,
@@ -190,8 +191,9 @@ test("annual materialization is deterministic", () => {
   );
 });
 
-test("person thread geometry keeps person and year identity on every data vertex", () => {
+test("person thread geometry keeps identity while separating life and evidence layers", () => {
   const geometry = buildPersonThreadGeometry(annualDataset);
+  const renderDataset = buildRenderHistoryDataset(annualDataset);
   assert.equal(geometry.ranges.length, annualDataset.people.length);
   assert.equal(geometry.positions.length, geometry.segmentCount * 2 * 3);
   assert.equal(geometry.colors.length, geometry.positions.length);
@@ -202,9 +204,30 @@ test("person thread geometry keeps person and year identity on every data vertex
   for (let vertex = 0; vertex < geometry.alpha.length; vertex += 1) {
     assert.ok(geometry.personIndices[vertex] >= 0);
     assert.ok(geometry.personIndices[vertex] < annualDataset.people.length);
-    assert.ok(Number.isInteger(geometry.yearIndices[vertex]));
+    assert.ok(Number.isFinite(geometry.yearIndices[vertex]));
     assert.ok(geometry.alpha[vertex] > 0 && geometry.alpha[vertex] <= 1);
   }
+  assert.equal(
+    geometry.evidencePositions.length,
+    geometry.evidenceSegmentCount * 2 * 3,
+  );
+  assert.equal(geometry.evidenceColors.length, geometry.evidencePositions.length);
+  assert.equal(geometry.evidenceAlpha.length, geometry.evidenceSegmentCount * 2);
+  assert.equal(geometry.evidenceDerivations.length, geometry.evidenceAlpha.length);
+  assert.equal(geometry.anchorPositions.length, geometry.anchorPersonIndices.length * 3);
+
+  const confuciusIndex = renderDataset.people.findIndex((person) => person.id === "confucius");
+  const confuciusRecords = renderDataset.personYears
+    .filter((record) => record[0] === confuciusIndex);
+  const attested = confuciusRecords.find((record) => record[1] === -500);
+  const unknown = confuciusRecords.find((record) => record[1] === -499);
+  assert.ok(attested && attested[8] >= 0);
+  assert.equal(unknown?.[8], -1);
+  const attestedRange = geometry.evidenceRanges.find((range) =>
+    range.personIndex === confuciusIndex && range.startYear === -500);
+  assert.equal(attestedRange?.endYear, -500);
+  assert.equal(attestedRange?.segmentCount, 0);
+  assert.ok(geometry.evidenceRanges.some((range) => range.segmentCount > 0));
 });
 
 test("geography keyframes span the work and remain chronologically ordered", () => {

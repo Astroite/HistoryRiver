@@ -42,11 +42,12 @@ test("server-renders only the HistoryRiver visual shell", async () => {
 });
 
 test("keeps product interaction debug-only while enabling editor-camera navigation", async () => {
-  const [page, layout, packageJson, runtime, cameraControls] = await Promise.all([
+  const [page, layout, packageJson, runtime, personThreads, cameraControls] = await Promise.all([
     readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../src/app/history-river.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/history-person-threads.ts", import.meta.url), "utf8"),
     readFile(
       new URL("../src/lib/viewport/ue5-editor-camera-controls.ts", import.meta.url),
       "utf8",
@@ -67,19 +68,21 @@ test("keeps product interaction debug-only while enabling editor-camera navigati
     "OrbitControls",
     "Raycaster",
     "pointermove",
-    "selectedPerson",
     "selectedRelation",
     "eventCloud",
     "relationLines",
   ]) {
     assert.doesNotMatch(runtime, new RegExp(forbidden), forbidden);
   }
-  assert.match(runtime, /buildRenderPersonThreadGeometry/);
   assert.match(runtime, /renderData/);
   assert.match(runtime, /UE5EditorCameraControls/);
+  assert.match(runtime, /createPersonThreadRig/);
   assert.match(runtime, /URLSearchParams\(window\.location\.search\)\.has\("debug"\)/);
   assert.match(runtime, /HistoryDebugMenu/);
   assert.match(runtime, /sceneComponentsRef/);
+  assert.match(personThreads, /buildRenderPersonThreadGeometry/);
+  assert.match(personThreads, /Line2/);
+  assert.match(personThreads, /summarizePersonEvidence/);
   assert.match(cameraControls, /resolveUE5CameraGesture/);
   assert.match(cameraControls, /requestPointerLock/);
   for (const forbidden of [
