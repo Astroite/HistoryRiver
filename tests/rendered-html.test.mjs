@@ -41,12 +41,16 @@ test("server-renders only the HistoryRiver visual shell", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
-test("removes starter code and prevents product interaction logic from returning", async () => {
-  const [page, layout, packageJson, runtime] = await Promise.all([
+test("keeps product interaction absent while enabling editor-camera navigation", async () => {
+  const [page, layout, packageJson, runtime, cameraControls] = await Promise.all([
     readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../src/app/history-river.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL("../src/lib/viewport/ue5-editor-camera-controls.ts", import.meta.url),
+      "utf8",
+    ),
   ]);
 
   assert.match(page, /export const metadata:\s*Metadata/);
@@ -73,6 +77,18 @@ test("removes starter code and prevents product interaction logic from returning
   }
   assert.match(runtime, /buildRenderPersonThreadGeometry/);
   assert.match(runtime, /renderData/);
+  assert.match(runtime, /UE5EditorCameraControls/);
+  assert.match(cameraControls, /resolveUE5CameraGesture/);
+  assert.match(cameraControls, /requestPointerLock/);
+  for (const forbidden of [
+    "Raycaster",
+    "selectedPerson",
+    "selectedRelation",
+    "autoPlay",
+    "URLSearchParams",
+  ]) {
+    assert.doesNotMatch(cameraControls, new RegExp(forbidden), forbidden);
+  }
 
   await assert.rejects(access(previewRoot));
   await access(new URL("src/app/history-river.tsx", templateRoot));

@@ -1,7 +1,7 @@
 # 《落九川》技术与年度人物数据合同
 
-> 状态：M2 技术基线 v1.0
-> 更新日期：2026-07-18
+> 状态：M2 技术基线 v1.1
+> 更新日期：2026-07-20
 > 产品语义：[design.md](./design.md)
 
 ## 1. 工程基线
@@ -16,7 +16,7 @@
 | 规范数据库 | Node 内置 SQLite，Schema migration v1 |
 | Web 产物 | 确定性 JSON；完整年度数据、年度切片和紧凑渲染数据分离 |
 
-页面是固定相机的纯视觉运行时。React 只挂载场景；Three.js 自己管理渲染循环、Resize、质量档、低动态偏好和资源释放。
+页面是无产品 UI 的三维视觉运行时。React 只挂载场景；Three.js 自己管理渲染循环、UE5 式编辑器相机、Resize、质量档、低动态偏好和资源释放。
 
 ## 2. 历史时间合同
 
@@ -102,11 +102,13 @@ M2 允许四类来源：原始文献的可定位数字版本、学术出版物�
 
 位置未知时，渲染器使用由人物 ID 确定的稳定河道；该偏移只存在于视觉投影。观察位置只以不确定度加权的小幅偏移进入河形，不声称精确地理复原。
 
-正式场景只有固定相机。环境材质可以缓慢流动；`prefers-reduced-motion` 会冻结或减弱流动。开发环境提供只读 `window.__historyRiverDiagnostics` 供外部截图/采样脚本读取，不创建 UI 或产品交互，生产构建不保留该对象。
+正式场景以固定基准机位启动，并由独立的 `UE5EditorCameraControls` 处理纯视口导航。RMB 使用 Pointer Lock 优先、Pointer Capture 降级的环视，飞行位移在渲染循环中按帧时间更新；滚轮、LMB/MMB 和 Alt 组合分别实现 UE5 透视视口的调速、推拉、平移与枢轴操作。控制器不读取人物数据，不做 Raycast，也不持有选择或时间状态。
+
+环境材质可以缓慢流动；`prefers-reduced-motion` 会冻结或减弱流动，但不禁用用户主动控制的相机。开发环境提供只读 `window.__historyRiverDiagnostics` 供外部截图/采样脚本读取，不创建 UI 或产品交互，生产构建不保留该对象。
 
 ## 7. 已删除架构
 
-M1 的 `ExperienceState`、75 秒时间表、自动相机锚点、观察窗口、人物/关系选择、Raycaster、Pointer、键盘产品命令、URL `?view=`、OrbitControls、模拟事件和思想关系夹具不再是技术基线。相关测试也已删除并由年度数据不变量替代。
+M1 的 `ExperienceState`、75 秒时间表、自动相机锚点、观察窗口、人物/关系选择、Raycaster、拾取 Pointer、键盘产品命令、URL `?view=`、OrbitControls、模拟事件和思想关系夹具不再是技术基线。M2-02 新增的 Pointer/Mouse/Keyboard 监听只改变相机，不恢复上述产品架构。
 
 ## 8. 测试与指标
 
@@ -115,12 +117,13 @@ npm run data:build  # 重建数据库与产物
 npm run data:check  # 重建并比较确定性产物
 npm run typecheck
 npm run test:model
+npm run test:camera
 npm run build
 npm run lint
 npm test
 ```
 
-模型测试覆盖纪年往返、跨 BCE/CE、年度唯一性、双向成员索引、未知位置、显式插值、悬空来源、观察重叠、确定性、顶点身份、地理年度切片与海洋流场。
+模型测试覆盖纪年往返、跨 BCE/CE、年度唯一性、双向成员索引、未知位置、显式插值、悬空来源、观察重叠、确定性、顶点身份、地理年度切片与海洋流场。相机测试覆盖 UE5 鼠标手势映射、飞行键别名、环视、平移、枢轴环绕/推拉、滚轮调速、作品聚焦，以及松键和释放时的停止与清理。
 
 M2 固定视口软件 WebGL 记录：1920×1080 截图构图通过；场景 54 次绘制、13 个几何、15 个纹理。SwiftShader 样本帧时约 1.7 秒 P50，明确不代表目标 GPU，作为失败/环境受限样本保留。生产客户端主块约 687 kB，仍超过 500 kB 警告线；紧凑渲染产物已把该块从接入完整年度 JSON 时的约 1.17 MB 降低，但 Three.js/视觉主块后续仍需拆分或进一步测量。
 

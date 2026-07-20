@@ -15,6 +15,7 @@ import {
   historicalYearToY,
   type RenderHistoryDataset,
 } from "@/lib/history/model";
+import { UE5EditorCameraControls } from "@/lib/viewport/ue5-editor-camera-controls";
 
 const historyData = renderData as unknown as RenderHistoryDataset;
 
@@ -145,10 +146,11 @@ export function HistoryRiver() {
     scene.background = new THREE.Color(0x02070b);
     scene.fog = new THREE.FogExp2(0x02070b, 0.0032);
 
-    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 520);
+    const cameraTarget = new THREE.Vector3(-18, 49, 4);
+    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 1_600);
     camera.position.set(54, 46, 238);
     camera.up.set(0, 1, 0);
-    camera.lookAt(new THREE.Vector3(-18, 49, 4));
+    camera.lookAt(cameraTarget);
 
     const renderer = new THREE.WebGLRenderer({
       antialias: quality === "default",
@@ -167,9 +169,18 @@ export function HistoryRiver() {
     renderer.domElement.className = "history-canvas";
     renderer.domElement.setAttribute(
       "aria-label",
-      `由 ${historyData.manifest.personCount} 位跨时代核心人物逐年轨迹构成的历史长河纯视觉场景`,
+      `由 ${historyData.manifest.personCount} 位跨时代核心人物逐年轨迹构成的可自由浏览历史长河三维场景`,
     );
     mount.appendChild(renderer.domElement);
+
+    const cameraControls = new UE5EditorCameraControls(
+      camera,
+      renderer.domElement,
+      {
+        pivot: cameraTarget,
+        focusDistance: camera.position.distanceTo(cameraTarget),
+      },
+    );
 
     const riverGroup = new THREE.Group();
     scene.add(riverGroup);
@@ -220,11 +231,13 @@ export function HistoryRiver() {
     let previousFrameTime = 0;
     renderer.setAnimationLoop((now) => {
       renderer.info.reset();
+      const deltaSeconds = previousFrameTime > 0 ? (now - previousFrameTime) / 1_000 : 0;
       if (diagnostics && previousFrameTime > 0) {
         diagnostics.frameTimeMs.push(now - previousFrameTime);
         if (diagnostics.frameTimeMs.length > 600) diagnostics.frameTimeMs.shift();
       }
       previousFrameTime = now;
+      cameraControls.update(deltaSeconds);
       geography.update(now, lowMotion);
       visuals.update(now, lowMotion);
       personThreads.material.uniforms.uTime.value = lowMotion ? 0 : now;
@@ -240,6 +253,7 @@ export function HistoryRiver() {
       renderer.setAnimationLoop(null);
       resizeObserver.disconnect();
       motionPreference.removeEventListener("change", syncMotionPreference);
+      cameraControls.dispose();
       if (diagnostics && window.__historyRiverDiagnostics === diagnostics) {
         delete window.__historyRiverDiagnostics;
       }
