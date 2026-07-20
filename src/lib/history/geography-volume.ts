@@ -2,6 +2,8 @@ import {
   CONTENT_END_YEAR,
   RIVER_START_YEAR,
   abstractChina,
+  historicalYearCount,
+  historicalYears,
   historicalYearToY,
 } from "./model.ts";
 
@@ -348,7 +350,8 @@ export function buildGeographyVolume(options: {
   const longitudinalStride = Math.max(1, Math.round(options.longitudinalStride ?? 4));
   if (endYear < startYear) throw new Error("endYear must not precede startYear");
 
-  const annualSliceCount = endYear - startYear + 1;
+  const years = historicalYears(startYear, endYear);
+  const annualSliceCount = historicalYearCount(startYear, endYear);
   const sliceSegmentCount = annualSliceCount * contourSamples;
   const longitudinalSamples = Math.ceil(contourSamples / longitudinalStride);
   const longitudinalSegmentCount = Math.max(0, annualSliceCount - 1) * longitudinalSamples;
@@ -362,10 +365,10 @@ export function buildGeographyVolume(options: {
   let sliceVertex = 0;
   let longitudinalVertex = 0;
   let previousContour: ReadonlyArray<readonly [number, number]> | null = null;
-  let previousYear = startYear;
-  let previousUncertainty = geographyProfileAt(startYear).uncertainty;
+  let previousYear = years[0];
+  let previousUncertainty = geographyProfileAt(years[0]).uncertainty;
 
-  for (let year = startYear; year <= endYear; year += 1) {
+  for (const year of years) {
     const contour = geographyContourAt(year, contourSamples);
     const uncertainty = geographyProfileAt(year).uncertainty;
     const y = historicalYearToY(year);

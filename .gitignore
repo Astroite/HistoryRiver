@@ -39,6 +39,7 @@ next-env.d.ts
 /outputs/
 /work/
 /temp/
+/data/history/build/
 
 # code intelligence index (tool-generated)
 /.codegraph/

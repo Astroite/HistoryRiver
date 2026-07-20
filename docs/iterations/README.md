@@ -2,7 +2,7 @@
 
 当前迭代放在 `docs/iterations/current/`，完成后整体归档到 `docs/iterations/archive/MN/`。
 
-当前没有活跃迭代。最近归档：[M1-01 核心体验原型](./archive/M1-01/README.md)（2026-07-18，有保留项）。
+当前无活跃迭代。最近归档：[M2-01 年度人物轨迹数据库与河流重构](./archive/M2-01/README.md)（2026-07-18，含明确性能限制）；上一归档：[M1-01 核心体验原型](./archive/M1-01/README.md)（2026-07-18，有保留项）。
 
 ## 阶段契约
 

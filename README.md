@@ -1,47 +1,57 @@
 # 落九川
 
-《落九川》是一件从今天仰望中国历史长河的互动数据艺术作品。当前仓库（内部代号 `HistoryRiver`）处于 P0 原型阶段，使用明确标注的模拟数据验证“远看是河、近看是人、俯看是山河”的同源三维体验。
+《落九川》是一件从今天仰望中国历史长河的数据艺术作品。当前 M2 基线以人物为第一记录单元、以历史年为统一切片单位：公元前 2700 年至 1949 年共有 4,649 个有效年度切片，第一版跨时代核心数据包含 44 位人物和 2,768 条人物年度状态。
 
-## Prerequisites
-
-- Node.js `>=22.13.0`
+正式运行时是纯视觉场景。M1 中未经确认的 UI、75 秒自动导览、五状态流程、自动镜头、悬停/选择、人物详情、事件点云、思想关系线、产品快捷键和 OrbitControls 已删除；星空、云雾、天河、入海口、人民光海、年度地理背景、材质与后处理继续保留。
 
 ## 本地运行
 
+需要 Node.js `>=22.13.0`。
+
 ```bash
 npm install
+npm run data:build
 npm run dev
 ```
 
-打开开发服务器输出的本地地址。首阶段只面向桌面浏览器。
+`data:build` 从可审查 JSON 源数据重建 SQLite 规范库和 Web 产物。SQLite 文件位于忽略提交的 `data/history/build/`，不是唯一数据源。
 
 ## 验证
 
 ```bash
+npm run data:check
 npm run lint
 npm test
 ```
 
-`npm test` 依次执行类型检查、历史模型不变量、生产构建和服务端页面验证。
+`npm test` 依次检查确定性数据构建、类型、年度人物模型、地理/海洋几何、生产构建和纯视觉页面合同。
+
+## 数据入口
+
+- 可审查源数据：`data/history/source/`
+- SQLite 迁移：`data/history/migrations/`
+- 数据构建器：`scripts/build-history-data.ts`
+- Web 产物：`src/data/history/generated/`
+- 领域合同与视觉投影：`src/lib/history/model.ts`
+
+当前 44 人是跨时代启动数据，不是完整人物库，也不代表人口或客观历史重要度。史料不足的年度位置保持 `unknown`；任何插值都必须单独记录规则、端点观察和不确定度。
 
 ## 文档入口
 
-- 产品与体验：[docs/design.md](./docs/design.md)
-- 视觉设计基线：[docs/visual-design.md](./docs/visual-design.md)
-- 历史地理连续体数据：[docs/geography-data.md](./docs/geography-data.md)
-- 技术基线：[docs/tech.md](./docs/tech.md)
-- 最近归档迭代：[M1-01 核心体验原型](./docs/iterations/archive/M1-01/README.md)
+- 产品与数据语义：[docs/design.md](./docs/design.md)
+- 技术与数据合同：[docs/tech.md](./docs/tech.md)
+- 视觉基线：[docs/visual-design.md](./docs/visual-design.md)
+- 历史地理背景说明：[docs/geography-data.md](./docs/geography-data.md)
+- 最近归档：[M2-01 年度人物轨迹数据库与河流重构](./docs/iterations/archive/M2-01/README.md)
+- 上一归档：[M1-01 核心体验原型](./docs/iterations/archive/M1-01/README.md)
 
-当前 P0 不是正式历史内容。人物、事件、关系、影响力与地理位置均为验证交互语义而制作的确定性模拟夹具。
+## 工程结构
 
-## 技术栈说明
+- `src/app/`：单页纯视觉 Three.js 场景；
+- `src/lib/history/`：年度人物领域模型、地理背景和海洋流场；
+- `src/worker/`：Cloudflare Worker 入口；
+- `data/history/`：源数据、迁移和可删除数据库产物；
+- `scripts/`：确定性数据构建；
+- `tests/`、`docs/`：合同验证与长期文档。
 
-构建与路由使用 [vinext](https://www.npmjs.com/package/vinext)——把 **Next.js App Router 跑在 Vite 之上**并部署到 Cloudflare Workers。因此本仓库同时存在 `next` 与 `vite` 依赖/配置：`vite.config.ts` 是实际生效的构建配置，`next.config.ts` 是 vinext 复用的 Next 兼容配置，`eslint-config-next` 与 tsconfig 的 `next` 插件同理。这并非混用两套构建系统。
-
-目录约定：
-
-- `src/app/`——App Router 页面与三维场景（`history-river.tsx`）；
-- `src/lib/`——领域模型与确定性模拟数据（`history/model.ts`）；
-- `src/worker/`——Cloudflare Worker 部署入口；
-- `tooling/`——自定义 Vite 构建插件；
-- `tests/`、`docs/`——测试与文档。
+构建与路由使用 vinext（Next.js App Router 运行在 Vite 之上），部署目标为 Cloudflare Workers。

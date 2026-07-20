@@ -1,0 +1,13 @@
+[
+  { "id": "early-civilization", "label": "传说与早期文明", "startYear": -2700, "endYear": -1601, "order": 1, "targetPeople": 4, "coverageNote": "采用传统纪年并显式标记，不把传说年代当作考古定年。" },
+  { "id": "shang-zhou", "label": "商与西周", "startYear": -1600, "endYear": -771, "order": 2, "targetPeople": 4, "coverageNote": "以王室、政治与考古可见人物建立起始样本。" },
+  { "id": "spring-warring", "label": "春秋战国", "startYear": -770, "endYear": -222, "order": 3, "targetPeople": 4, "coverageNote": "覆盖思想、军事与统一进程，不建立诸子关系图谱。" },
+  { "id": "qin-han", "label": "秦汉", "startYear": -221, "endYear": 220, "order": 4, "targetPeople": 4, "coverageNote": "跨越 BCE/CE 边界，用于验证无公元零年的年度索引。" },
+  { "id": "division", "label": "三国两晋南北朝", "startYear": 221, "endYear": 589, "order": 5, "targetPeople": 4, "coverageNote": "以不同政权和文化领域人物表达长期分裂时代。" },
+  { "id": "sui-tang-five", "label": "隋唐五代", "startYear": 590, "endYear": 959, "order": 6, "targetPeople": 4, "coverageNote": "覆盖统一、女性统治者、文学与晚唐社会动荡。" },
+  { "id": "song-liao-xia-jin", "label": "宋辽夏金", "startYear": 960, "endYear": 1270, "order": 7, "targetPeople": 4, "coverageNote": "M2 先录入宋人，辽夏金人物是下一数据版本的明确缺口。" },
+  { "id": "yuan", "label": "元", "startYear": 1271, "endYear": 1367, "order": 8, "targetPeople": 4, "coverageNote": "覆盖统治、科学、书画与戏曲。" },
+  { "id": "ming", "label": "明", "startYear": 1368, "endYear": 1643, "order": 9, "targetPeople": 4, "coverageNote": "覆盖建国、航海、思想与医药。" },
+  { "id": "qing", "label": "清", "startYear": 1644, "endYear": 1840, "order": 10, "targetPeople": 4, "coverageNote": "覆盖帝王、文学与近代转折前后的经世人物。" },
+  { "id": "late-qing-republic", "label": "晚清民国至 1949", "startYear": 1841, "endYear": 1949, "order": 11, "targetPeople": 4, "coverageNote": "人物生命可以越过 1949，但本作品轨迹物化止于内容边界。" }
+]

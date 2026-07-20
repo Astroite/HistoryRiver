@@ -9,9 +9,11 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
+    "data:build": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/build-history-data.ts",
+    "data:check": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/build-history-data.ts --check",
     "typecheck": "tsc --noEmit",
     "test:model": "node --experimental-strip-types --test tests/history-model.test.ts",
-    "test": "npm run typecheck && npm run test:model && npm run build && node --test tests/rendered-html.test.mjs",
+    "test": "npm run data:check && npm run typecheck && npm run test:model && npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {

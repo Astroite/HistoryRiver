@@ -1,0 +1,13 @@
+[
+  { "id": "central-plains", "label": "中原", "position": [0, 0], "uncertainty": 0.38, "note": "宽泛地域锚点，不代表行政边界或精确地点。" },
+  { "id": "guanzhong", "label": "关中", "position": [-8, -1], "uncertainty": 0.3, "note": "宽泛地域锚点。" },
+  { "id": "shandong", "label": "齐鲁", "position": [7, 0], "uncertainty": 0.28, "note": "宽泛地域锚点。" },
+  { "id": "jiangnan", "label": "江南", "position": [6, 5], "uncertainty": 0.34, "note": "宽泛地域锚点。" },
+  { "id": "north-china", "label": "华北", "position": [1, -5], "uncertainty": 0.4, "note": "宽泛地域锚点。" },
+  { "id": "sichuan", "label": "巴蜀", "position": [-8, 5], "uncertainty": 0.34, "note": "宽泛地域锚点。" },
+  { "id": "lingnan", "label": "岭南", "position": [2, 9], "uncertainty": 0.42, "note": "宽泛地域锚点。" },
+  { "id": "northeast", "label": "东北", "position": [7, -8], "uncertainty": 0.46, "note": "宽泛地域锚点。" },
+  { "id": "northwest", "label": "西北", "position": [-11, -5], "uncertainty": 0.48, "note": "宽泛地域锚点。" },
+  { "id": "southeast-coast", "label": "东南沿海", "position": [9, 7], "uncertainty": 0.38, "note": "宽泛地域锚点。" },
+  { "id": "mongolia", "label": "蒙古高原", "position": [-1, -10], "uncertainty": 0.5, "note": "宽泛地域锚点。" }
+]

@@ -9,7 +9,6 @@ import {
   OceanFlowField,
   type OceanFlowPoint,
 } from "@/lib/history/ocean-flow-field";
-import type { ExperienceState } from "@/lib/history/model";
 
 type SceneQuality = "default" | "reduced";
 
@@ -22,7 +21,7 @@ interface CloudSpriteState {
 
 export interface HistoryVisualRig {
   root: THREE.Group;
-  update(now: number, view: ExperienceState, lowMotion: boolean): void;
+  update(now: number, lowMotion: boolean): void;
   resize(width: number, height: number, pixelRatio: number): void;
   setOceanBloomPass(active: boolean): void;
   dispose(): void;
@@ -1860,13 +1859,6 @@ export function createHistoryVisuals(options: {
     seaMist,
   );
 
-  const viewOpacity: Record<ExperienceState, number> = {
-    "river-overview": 1,
-    "entering-window": 0.62,
-    slice: 0.24,
-    "person-focus": 0.18,
-    "relation-focus": 0.14,
-  };
   const oceanBloomMaterials = [
     flowingOcean.material,
     crestRibbons.material,
@@ -1876,8 +1868,8 @@ export function createHistoryVisuals(options: {
 
   return {
     root,
-    update(now, view, lowMotion) {
-      const visibility = viewOpacity[view];
+    update(now, lowMotion) {
+      const visibility = 1;
       waterfallParticles.material.uniforms.uTime.value = lowMotion ? 0 : now;
       waterfallParticles.material.uniforms.uFlow.value = lowMotion ? 0 : 1;
       waterfallParticles.material.uniforms.uOpacity.value = 0.4 * visibility;

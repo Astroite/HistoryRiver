@@ -1,0 +1,82 @@
+{
+  "datasetVersion": "m2.1.0",
+  "emptySliceCount": 2481,
+  "eraCoverage": [
+    {
+      "actualPeople": 4,
+      "eraId": "early-civilization",
+      "label": "传说与早期文明",
+      "targetPeople": 4
+    },
+    {
+      "actualPeople": 4,
+      "eraId": "shang-zhou",
+      "label": "商与西周",
+      "targetPeople": 4
+    },
+    {
+      "actualPeople": 4,
+      "eraId": "spring-warring",
+      "label": "春秋战国",
+      "targetPeople": 4
+    },
+    {
+      "actualPeople": 4,
+      "eraId": "qin-han",
+      "label": "秦汉",
+      "targetPeople": 4
+    },
+    {
+      "actualPeople": 4,
+      "eraId": "division",
+      "label": "三国两晋南北朝",
+      "targetPeople": 4
+    },
+    {
+      "actualPeople": 4,
+      "eraId": "sui-tang-five",
+      "label": "隋唐五代",
+      "targetPeople": 4
+    },
+    {
+      "actualPeople": 4,
+      "eraId": "song-liao-xia-jin",
+      "label": "宋辽夏金",
+      "targetPeople": 4
+    },
+    {
+      "actualPeople": 4,
+      "eraId": "yuan",
+      "label": "元",
+      "targetPeople": 4
+    },
+    {
+      "actualPeople": 4,
+      "eraId": "ming",
+      "label": "明",
+      "targetPeople": 4
+    },
+    {
+      "actualPeople": 4,
+      "eraId": "qing",
+      "label": "清",
+      "targetPeople": 4
+    },
+    {
+      "actualPeople": 4,
+      "eraId": "late-qing-republic",
+      "label": "晚清民国至 1949",
+      "targetPeople": 4
+    }
+  ],
+  "interpolationCount": 0,
+  "observationCount": 44,
+  "personCount": 44,
+  "personYearCount": 2768,
+  "renderDataDigest": "05c4c6df993d590feb51650740f1c9297b51cb9769d66884840f188f5558d5ba",
+  "runtimeDigest": "40df2e7d1e3fa0e7252d701a3cc9cf1572bcce15265e17b07e8176c62a2a4c5e",
+  "sourceCount": 22,
+  "sourceDigest": "f5dae689da177df786efb031b50398b9ea34c048d845c3d408e673735d089f33",
+  "yearSliceCount": 4649,
+  "yearSlicesDigest": "47bcbf45ff96d780eb3cedbf03159ed90a4edb0cd237f660a3412c4bbe93b347"
+}

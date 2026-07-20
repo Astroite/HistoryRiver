@@ -1,0 +1,9 @@
+{
+  "id": "historyriver-core-person-trajectories",
+  "version": "m2.1.0",
+  "title": "《落九川》跨时代核心人物年度轨迹",
+  "startYear": -2700,
+  "endYear": 1949,
+  "historicalYearConvention": "signed-no-year-zero",
+  "selectionPolicy": "M2 启动数据：11 个连续时代覆盖单元各选四位关键人物；人物数量只表示策展覆盖，不代表人口或客观重要度。"
+}

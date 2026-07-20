@@ -26,25 +26,27 @@ async function render() {
   );
 }
 
-test("server-renders the HistoryRiver prototype shell", async () => {
+test("server-renders only the HistoryRiver visual shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>落九川｜交互原型<\/title>/i);
+  assert.match(html, /<title>落九川｜年度人物轨迹<\/title>/i);
   assert.match(html, /<main class="history-shell">/);
   assert.match(html, /class="history-stage"/);
   assert.match(html, /class="history-vignette"/);
-  assert.doesNotMatch(html, /原型 · 模拟数据|二十年窗口|观河/);
+  assert.doesNotMatch(html, /<button|<nav|<aside|<form|<input|<select/i);
+  assert.doesNotMatch(html, /原型 · 模拟数据|二十年窗口|观河|自动播放|人物详情/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
-test("removes all disposable starter metadata and preview code", async () => {
-  const [page, layout, packageJson] = await Promise.all([
+test("removes starter code and prevents product interaction logic from returning", async () => {
+  const [page, layout, packageJson, runtime] = await Promise.all([
     readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/history-river.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /export const metadata:\s*Metadata/);
@@ -54,6 +56,23 @@ test("removes all disposable starter metadata and preview code", async () => {
   assert.doesNotMatch(page, /codex-preview|_sites-preview/);
   assert.doesNotMatch(layout, /Starter Project|next\/font\/google/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+  for (const forbidden of [
+    "ExperienceState",
+    "guideStateAtSeconds",
+    "prototypeFixture",
+    "OrbitControls",
+    "Raycaster",
+    "URLSearchParams",
+    "pointermove",
+    "selectedPerson",
+    "selectedRelation",
+    "eventCloud",
+    "relationLines",
+  ]) {
+    assert.doesNotMatch(runtime, new RegExp(forbidden), forbidden);
+  }
+  assert.match(runtime, /buildRenderPersonThreadGeometry/);
+  assert.match(runtime, /renderData/);
 
   await assert.rejects(access(previewRoot));
   await access(new URL("src/app/history-river.tsx", templateRoot));
