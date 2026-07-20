@@ -21,11 +21,24 @@ interface CloudSpriteState {
 
 export interface HistoryVisualRig {
   root: THREE.Group;
+  components: Record<HistoryVisualComponent, THREE.Object3D>;
   update(now: number, lowMotion: boolean): void;
   resize(width: number, height: number, pixelRatio: number): void;
   setOceanBloomPass(active: boolean): void;
   dispose(): void;
 }
+
+export type HistoryVisualComponent =
+  | "stars"
+  | "clouds"
+  | "deepSeaDust"
+  | "ocean"
+  | "oceanCrests"
+  | "confluence"
+  | "seaFoam"
+  | "waterfallFibers"
+  | "waterfallParticles"
+  | "glows";
 
 export interface HistoryPostProcessing {
   render(): void;
@@ -1851,13 +1864,15 @@ export function createHistoryVisuals(options: {
     new THREE.Vector3(WATERFALL_CENTER_X + 6, 4, 58),
     new THREE.Vector2(236, 46),
   );
-  root.add(
+  const glows = new THREE.Group();
+  glows.add(
     sourceGlow,
     confluenceGlow,
     confluenceCore,
     horizonMist,
     seaMist,
   );
+  root.add(glows);
 
   const oceanBloomMaterials = [
     flowingOcean.material,
@@ -1868,6 +1883,18 @@ export function createHistoryVisuals(options: {
 
   return {
     root,
+    components: {
+      stars,
+      clouds: clouds.group,
+      deepSeaDust: deepSeaDust.object,
+      ocean: flowingOcean.object,
+      oceanCrests: crestRibbons.object,
+      confluence: confluenceFlows.object,
+      seaFoam: seaFoam.object,
+      waterfallFibers: waterfallFibers.object,
+      waterfallParticles: waterfallParticles.object,
+      glows,
+    },
     update(now, lowMotion) {
       const visibility = 1;
       waterfallParticles.material.uniforms.uTime.value = lowMotion ? 0 : now;

@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import * as THREE from "three";
 
-import { createHistoryGeography } from "@/app/history-geography-visuals";
+import {
+  createHistoryGeography,
+  type HistoryGeographyComponent,
+} from "@/app/history-geography-visuals";
 import {
   createHistoryPostProcessing,
   createHistoryVisuals,
+  type HistoryVisualComponent,
 } from "@/app/history-river-visuals";
 import renderData from "@/data/history/generated/render-data.json";
 import {
@@ -18,6 +22,125 @@ import {
 import { UE5EditorCameraControls } from "@/lib/viewport/ue5-editor-camera-controls";
 
 const historyData = renderData as unknown as RenderHistoryDataset;
+
+type SceneDebugComponent =
+  | HistoryVisualComponent
+  | HistoryGeographyComponent
+  | "personThreads";
+type DebugComponent = SceneDebugComponent | "vignette";
+type ComponentVisibility = Record<DebugComponent, boolean>;
+
+interface DebugComponentGroup {
+  label: string;
+  items: Array<{ id: DebugComponent; label: string }>;
+}
+
+const DEBUG_COMPONENT_GROUPS: DebugComponentGroup[] = [
+  {
+    label: "历史数据",
+    items: [
+      { id: "personThreads", label: "人物年度轨迹" },
+      { id: "annualSlices", label: "历史地理切片" },
+      { id: "longitudinalFibers", label: "历史地理纵线" },
+    ],
+  },
+  {
+    label: "历史长河",
+    items: [
+      { id: "waterfallFibers", label: "瀑布光纤" },
+      { id: "waterfallParticles", label: "瀑布粒子" },
+      { id: "ocean", label: "人民光海" },
+      { id: "oceanCrests", label: "海面潮脊" },
+      { id: "confluence", label: "河口汇流" },
+      { id: "seaFoam", label: "浪花" },
+      { id: "deepSeaDust", label: "深海尘光" },
+    ],
+  },
+  {
+    label: "环境",
+    items: [
+      { id: "stars", label: "星空" },
+      { id: "clouds", label: "云层" },
+      { id: "glows", label: "光晕与雾" },
+      { id: "vignette", label: "画面暗角" },
+    ],
+  },
+];
+
+function createDefaultComponentVisibility(): ComponentVisibility {
+  return {
+    personThreads: true,
+    annualSlices: true,
+    longitudinalFibers: true,
+    waterfallFibers: true,
+    waterfallParticles: true,
+    ocean: true,
+    oceanCrests: true,
+    confluence: true,
+    seaFoam: true,
+    deepSeaDust: true,
+    stars: true,
+    clouds: true,
+    glows: true,
+    vignette: true,
+  };
+}
+
+function subscribeToLocationChange(onStoreChange: () => void) {
+  window.addEventListener("popstate", onStoreChange);
+  return () => window.removeEventListener("popstate", onStoreChange);
+}
+
+function getDebugModeSnapshot() {
+  return new URLSearchParams(window.location.search).has("debug");
+}
+
+function getServerDebugModeSnapshot() {
+  return false;
+}
+
+function HistoryDebugMenu({
+  visibility,
+  onChange,
+  onSetAll,
+}: {
+  visibility: ComponentVisibility;
+  onChange: (component: DebugComponent, visible: boolean) => void;
+  onSetAll: (visible: boolean) => void;
+}) {
+  return (
+    <aside className="history-debug-menu" aria-label="调试菜单">
+      <header className="history-debug-header">
+        <span className="history-debug-badge">DEBUG</span>
+        <h2>场景组件</h2>
+      </header>
+      <div className="history-debug-actions">
+        <button type="button" onClick={() => onSetAll(true)}>
+          全部显示
+        </button>
+        <button type="button" onClick={() => onSetAll(false)}>
+          全部隐藏
+        </button>
+      </div>
+      {DEBUG_COMPONENT_GROUPS.map((group) => (
+        <fieldset key={group.label} className="history-debug-group">
+          <legend>{group.label}</legend>
+          {group.items.map((item) => (
+            <label key={item.id} className="history-debug-toggle">
+              <span>{item.label}</span>
+              <input
+                type="checkbox"
+                checked={visibility[item.id]}
+                onChange={(event) => onChange(item.id, event.currentTarget.checked)}
+              />
+            </label>
+          ))}
+        </fieldset>
+      ))}
+      <p className="history-debug-hint">移除地址中的 debug 参数即可关闭菜单</p>
+    </aside>
+  );
+}
 
 interface HistoryRiverDiagnostics {
   datasetVersion: string;
@@ -122,6 +245,17 @@ function createPersonThreads(data: RenderHistoryDataset): {
 
 export function HistoryRiver() {
   const mountRef = useRef<HTMLDivElement>(null);
+  const sceneComponentsRef = useRef<
+    Partial<Record<SceneDebugComponent, THREE.Object3D>>
+  >({});
+  const debugEnabled = useSyncExternalStore(
+    subscribeToLocationChange,
+    getDebugModeSnapshot,
+    getServerDebugModeSnapshot,
+  );
+  const [componentVisibility, setComponentVisibility] = useState(
+    createDefaultComponentVisibility,
+  );
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -194,6 +328,11 @@ export function HistoryRiver() {
     riverGroup.add(geography.root);
     const personThreads = createPersonThreads(historyData);
     riverGroup.add(personThreads.object);
+    sceneComponentsRef.current = {
+      ...visuals.components,
+      ...geography.components,
+      personThreads: personThreads.object,
+    };
 
     const postProcessing = createHistoryPostProcessing(
       renderer,
@@ -262,13 +401,53 @@ export function HistoryRiver() {
       disposeScene(scene);
       renderer.dispose();
       renderer.domElement.remove();
+      sceneComponentsRef.current = {};
     };
   }, []);
+
+  useEffect(() => {
+    for (const [component, visible] of Object.entries(componentVisibility)) {
+      if (component === "vignette") continue;
+      const object = sceneComponentsRef.current[component as SceneDebugComponent];
+      if (object) object.visible = visible;
+    }
+  }, [componentVisibility]);
+
+  const changeComponentVisibility = (
+    component: DebugComponent,
+    visible: boolean,
+  ) => {
+    setComponentVisibility((current) => ({
+      ...current,
+      [component]: visible,
+    }));
+  };
+
+  const setAllComponentsVisible = (visible: boolean) => {
+    setComponentVisibility((current) => {
+      const next = { ...current };
+      for (const component of Object.keys(next) as DebugComponent[]) {
+        next[component] = visible;
+      }
+      return next;
+    });
+  };
 
   return (
     <main className="history-shell">
       <div ref={mountRef} className="history-stage" />
-      <div className="history-vignette" aria-hidden="true" />
+      <div
+        className="history-vignette"
+        aria-hidden="true"
+        hidden={!componentVisibility.vignette}
+      />
+      {debugEnabled ? (
+        <HistoryDebugMenu
+          visibility={componentVisibility}
+          onChange={changeComponentVisibility}
+          onSetAll={setAllComponentsVisible}
+        />
+      ) : null}
     </main>
   );
 }

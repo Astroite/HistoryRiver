@@ -41,7 +41,7 @@ test("server-renders only the HistoryRiver visual shell", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
-test("keeps product interaction absent while enabling editor-camera navigation", async () => {
+test("keeps product interaction debug-only while enabling editor-camera navigation", async () => {
   const [page, layout, packageJson, runtime, cameraControls] = await Promise.all([
     readFile(new URL("../src/app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/layout.tsx", import.meta.url), "utf8"),
@@ -66,7 +66,6 @@ test("keeps product interaction absent while enabling editor-camera navigation",
     "prototypeFixture",
     "OrbitControls",
     "Raycaster",
-    "URLSearchParams",
     "pointermove",
     "selectedPerson",
     "selectedRelation",
@@ -78,6 +77,9 @@ test("keeps product interaction absent while enabling editor-camera navigation",
   assert.match(runtime, /buildRenderPersonThreadGeometry/);
   assert.match(runtime, /renderData/);
   assert.match(runtime, /UE5EditorCameraControls/);
+  assert.match(runtime, /URLSearchParams\(window\.location\.search\)\.has\("debug"\)/);
+  assert.match(runtime, /HistoryDebugMenu/);
+  assert.match(runtime, /sceneComponentsRef/);
   assert.match(cameraControls, /resolveUE5CameraGesture/);
   assert.match(cameraControls, /requestPointerLock/);
   for (const forbidden of [

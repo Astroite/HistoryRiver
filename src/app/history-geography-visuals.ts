@@ -8,8 +8,11 @@ import {
 
 export interface HistoryGeographyRig {
   root: THREE.Group;
+  components: Record<HistoryGeographyComponent, THREE.Object3D>;
   update(now: number, lowMotion: boolean): void;
 }
+
+export type HistoryGeographyComponent = "annualSlices" | "longitudinalFibers";
 
 const VOLUME_OPACITY = 0.0028;
 const LONGITUDINAL_OPACITY = 0.038;
@@ -146,6 +149,10 @@ export function createHistoryGeography(): HistoryGeographyRig {
 
   return {
     root,
+    components: {
+      annualSlices,
+      longitudinalFibers,
+    },
     update(now, lowMotion) {
       const flow = lowMotion ? 0 : 1;
       sliceMaterial.uniforms.uTime.value = now;
