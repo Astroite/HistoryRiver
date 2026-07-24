@@ -340,3 +340,795 @@ body {
     animation-iteration-count: 1 !important;
   }
 }
+/* ===== 《落九川》观河体验层 ===== */
+
+:root {
+  --history-ivory: #f3ebdd;
+  --history-gold: #e7cca0;
+  --history-gold-dim: rgba(231, 204, 160, 0.55);
+  --history-gold-hairline: rgba(231, 204, 160, 0.22);
+  --history-celestial: #a9c5dc;
+  --history-ink-deep: rgba(2, 7, 11, 0.78);
+  --history-ink-panel: rgba(4, 11, 16, 0.66);
+  --history-cinnabar: #a63a2c;
+  --history-serif:
+    "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC",
+    "SimSun", serif;
+}
+
+.history-experience {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  font-family: var(--history-serif);
+  color: var(--history-ivory);
+}
+
+.history-experience button {
+  font-family: inherit;
+}
+
+/* --- 纸墨颗粒 --- */
+
+.history-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* --- 朱印 --- */
+
+.history-seal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  color: rgba(255, 244, 230, 0.96);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255, 210, 180, 0.16), transparent 55%),
+    var(--history-cinnabar);
+  border-radius: 6px;
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 238, 220, 0.35),
+    inset 0 0 12px rgba(60, 8, 4, 0.55),
+    0 2px 10px rgba(0, 0, 0, 0.4);
+  user-select: none;
+}
+
+.history-seal-small {
+  width: 34px;
+  height: 34px;
+  font-size: 19px;
+  border-radius: 5px;
+}
+
+.history-seal-mini {
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+  border-radius: 3px;
+}
+
+/* --- 序章 --- */
+
+.history-prologue {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(2, 7, 11, 0.18), rgba(2, 7, 11, 0.66) 78%),
+    linear-gradient(180deg, rgba(2, 7, 11, 0.42), transparent 30%, transparent 68%, rgba(2, 7, 11, 0.5));
+  animation: history-prologue-in 1.2s ease-out both;
+}
+
+@keyframes history-prologue-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.history-prologue-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  max-width: 560px;
+  padding: 40px;
+  text-align: center;
+}
+
+.history-prologue-title-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.history-prologue-title {
+  margin: 0;
+  writing-mode: vertical-rl;
+  font-size: clamp(64px, 11vh, 108px);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  color: var(--history-ivory);
+  text-shadow:
+    0 0 32px rgba(169, 197, 220, 0.35),
+    0 0 90px rgba(231, 204, 160, 0.18);
+}
+
+.history-prologue-subtitle {
+  margin: 0;
+  color: var(--history-gold-dim);
+  font-size: 14px;
+  letter-spacing: 0.5em;
+  text-indent: 0.5em;
+}
+
+.history-prologue-inscription {
+  margin: 0;
+  color: rgba(243, 235, 221, 0.82);
+  font-size: 16px;
+  line-height: 2.15;
+  letter-spacing: 0.12em;
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.6);
+}
+
+.history-prologue-enter {
+  margin-top: 6px;
+  padding: 11px 44px;
+  color: var(--history-gold);
+  font-size: 15px;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  cursor: pointer;
+  background: rgba(231, 204, 160, 0.05);
+  border: 1px solid var(--history-gold-hairline);
+  border-radius: 2px;
+  transition: background 0.3s ease, box-shadow 0.3s ease, color 0.3s ease;
+}
+
+.history-prologue-enter:hover {
+  color: #fff6e6;
+  background: rgba(231, 204, 160, 0.13);
+  box-shadow: 0 0 26px rgba(231, 204, 160, 0.16);
+}
+
+.history-prologue-hint {
+  margin: 4px 0 0;
+  color: rgba(169, 197, 220, 0.5);
+  font-size: 12px;
+  letter-spacing: 0.2em;
+}
+
+/* --- 左上角题款 --- */
+
+.history-colophon {
+  position: absolute;
+  top: 20px;
+  left: 22px;
+  pointer-events: auto;
+  animation: history-fade-in 0.8s ease-out both;
+}
+
+.history-colophon-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  cursor: pointer;
+  color: var(--history-ivory);
+  background: rgba(2, 7, 11, 0.32);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  transition: border-color 0.3s ease, background 0.3s ease;
+}
+
+.history-colophon-title:hover {
+  background: rgba(4, 11, 16, 0.6);
+  border-color: var(--history-gold-hairline);
+}
+
+.history-colophon-name {
+  writing-mode: vertical-rl;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-shadow: 0 0 16px rgba(169, 197, 220, 0.4);
+}
+
+@keyframes history-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* --- 纪年轴 --- */
+
+.history-era-rail {
+  position: absolute;
+  top: 50%;
+  right: 26px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.history-era-track {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 168px;
+  height: min(62vh, 640px);
+  padding-right: 14px;
+  border-right: 1px solid var(--history-gold-hairline);
+}
+
+.history-era-segment {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 1px;
+  min-height: 20px;
+  padding: 0 10px 0 0;
+  overflow: hidden;
+  cursor: pointer;
+  color: rgba(243, 235, 221, 0.52);
+  text-align: right;
+  background: transparent;
+  border: 0;
+  border-right: 2px solid transparent;
+  transition: color 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+}
+
+.history-era-segment::after {
+  content: "";
+  position: absolute;
+  right: -15px;
+  top: 50%;
+  width: 7px;
+  height: 1px;
+  background: var(--history-gold-hairline);
+  transition: background 0.25s ease, width 0.25s ease;
+}
+
+.history-era-segment:hover {
+  color: var(--history-ivory);
+  background: linear-gradient(90deg, transparent, rgba(231, 204, 160, 0.07));
+}
+
+.history-era-segment:hover::after {
+  width: 11px;
+  background: var(--history-gold-dim);
+}
+
+.history-era-segment.is-active {
+  color: var(--history-gold);
+  border-right-color: var(--history-gold);
+}
+
+.history-era-label {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+.history-era-years {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.history-era-segment:hover .history-era-years,
+.history-era-segment.is-active .history-era-years {
+  opacity: 0.72;
+  transform: translateX(0);
+}
+
+.history-era-marker {
+  position: absolute;
+  right: -1px;
+  left: -8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: top 0.35s ease-out;
+}
+
+.history-era-marker-line {
+  position: absolute;
+  right: -14px;
+  width: 12px;
+  height: 1px;
+  background: var(--history-gold);
+  box-shadow: 0 0 8px rgba(231, 204, 160, 0.7);
+}
+
+.history-era-marker-year {
+  margin-right: 22px;
+  padding: 2px 8px;
+  color: var(--history-gold);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+  background: rgba(2, 7, 11, 0.62);
+  border: 1px solid var(--history-gold-hairline);
+  border-radius: 2px;
+}
+
+.history-era-caption {
+  margin: 0;
+  padding-right: 14px;
+  color: rgba(169, 197, 220, 0.38);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  writing-mode: horizontal-tb;
+}
+
+/* --- 名录 --- */
+
+.history-top-actions {
+  position: absolute;
+  top: 20px;
+  right: 26px;
+  pointer-events: auto;
+}
+
+.history-directory-toggle {
+  padding: 8px 16px;
+  color: var(--history-gold-dim);
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  cursor: pointer;
+  background: rgba(2, 7, 11, 0.4);
+  border: 1px solid var(--history-gold-hairline);
+  border-radius: 3px;
+  transition: color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease;
+}
+
+.history-directory-toggle:hover,
+.history-directory-toggle[aria-pressed="true"] {
+  color: var(--history-gold);
+  background: rgba(231, 204, 160, 0.08);
+  box-shadow: 0 0 18px rgba(231, 204, 160, 0.1);
+}
+
+.history-directory {
+  position: absolute;
+  top: 66px;
+  right: 26px;
+  display: flex;
+  flex-direction: column;
+  width: 292px;
+  max-height: calc(100svh - 120px);
+  pointer-events: auto;
+  background: var(--history-ink-panel);
+  border: 1px solid var(--history-gold-hairline);
+  border-radius: 6px;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(16px);
+  animation: history-fade-in 0.3s ease-out both;
+}
+
+.history-directory-header {
+  position: relative;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid rgba(231, 204, 160, 0.14);
+}
+
+.history-directory-header h2 {
+  margin: 0;
+  color: var(--history-gold);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+}
+
+.history-directory-header p {
+  margin: 6px 0 0;
+  color: rgba(169, 197, 220, 0.5);
+  font-size: 10px;
+  line-height: 1.6;
+  letter-spacing: 0.06em;
+}
+
+.history-directory-header button {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 26px;
+  height: 26px;
+  color: rgba(243, 235, 221, 0.6);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+}
+
+.history-directory-header button:hover {
+  color: var(--history-ivory);
+  background: rgba(231, 204, 160, 0.1);
+}
+
+.history-directory-body {
+  padding: 6px 12px 14px;
+  overflow-y: auto;
+}
+
+.history-directory-body h3 {
+  margin: 14px 6px 6px;
+  color: rgba(231, 204, 160, 0.66);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+}
+
+.history-directory-body ul {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.history-directory-body li button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 9px;
+  cursor: pointer;
+  color: rgba(243, 235, 221, 0.78);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.history-directory-body li button:hover {
+  color: var(--history-ivory);
+  background: rgba(231, 204, 160, 0.07);
+  border-color: rgba(231, 204, 160, 0.16);
+}
+
+.history-directory-body li button[aria-pressed="true"] {
+  color: var(--history-gold);
+  background: rgba(231, 204, 160, 0.1);
+  border-color: rgba(231, 204, 160, 0.3);
+}
+
+.history-directory-body li strong {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.history-directory-body li span {
+  color: rgba(169, 197, 220, 0.48);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+}
+
+/* --- 人物志 --- */
+
+.history-person-card {
+  position: absolute;
+  top: 50%;
+  left: 34px;
+  transform: translateY(-50%);
+  width: 322px;
+  max-height: calc(100svh - 140px);
+  padding: 22px 22px 18px;
+  overflow-y: auto;
+  pointer-events: auto;
+  background:
+    linear-gradient(200deg, rgba(231, 204, 160, 0.045), transparent 38%),
+    var(--history-ink-panel);
+  border: 1px solid var(--history-gold-hairline);
+  border-radius: 6px;
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.52);
+  backdrop-filter: blur(18px);
+  animation: history-card-in 0.38s cubic-bezier(0.2, 0.8, 0.25, 1) both;
+}
+
+@keyframes history-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0);
+  }
+}
+
+.history-person-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(231, 204, 160, 0.16);
+}
+
+.history-person-card-names h2 {
+  margin: 0;
+  color: var(--history-ivory);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-shadow: 0 0 22px rgba(231, 204, 160, 0.22);
+}
+
+.history-person-card-aliases {
+  margin: 6px 0 0;
+  color: rgba(169, 197, 220, 0.6);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+}
+
+.history-person-card-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+  margin: 14px 0 0;
+}
+
+.history-person-card-meta div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.history-person-card-meta dt {
+  color: rgba(231, 204, 160, 0.55);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+}
+
+.history-person-card-meta dd {
+  margin: 0;
+  color: rgba(243, 235, 221, 0.88);
+  font-size: 12px;
+  line-height: 1.55;
+  letter-spacing: 0.04em;
+}
+
+.history-person-card-chronology {
+  display: inline-block;
+  margin: 14px 0 0;
+  padding: 3px 10px;
+  color: rgba(169, 197, 220, 0.85);
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  border: 1px solid rgba(169, 197, 220, 0.28);
+  border-radius: 2px;
+}
+
+.history-person-card-reason {
+  margin: 13px 0 0;
+  color: rgba(243, 235, 221, 0.72);
+  font-size: 12px;
+  line-height: 1.9;
+  letter-spacing: 0.05em;
+}
+
+.history-person-card-evidence {
+  margin-top: 15px;
+  padding-top: 13px;
+  border-top: 1px solid rgba(231, 204, 160, 0.14);
+}
+
+.history-person-card-evidence h3 {
+  margin: 0 0 9px;
+  color: rgba(231, 204, 160, 0.66);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+}
+
+.history-person-card-evidence ol {
+  display: grid;
+  gap: 8px;
+  max-height: 168px;
+  margin: 0;
+  padding: 0 2px 0 20px;
+  overflow-y: auto;
+}
+
+.history-person-card-evidence li {
+  color: rgba(169, 197, 220, 0.6);
+  font-size: 11px;
+}
+
+.history-person-card-evidence li strong,
+.history-person-card-evidence li span {
+  display: block;
+}
+
+.history-person-card-evidence li strong {
+  color: rgba(243, 235, 221, 0.9);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.history-person-card-evidence li span {
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+.history-person-card-evidence p {
+  margin: 0;
+  color: rgba(169, 197, 220, 0.5);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.history-person-card-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 17px;
+}
+
+.history-person-focus {
+  padding: 10px;
+  color: #10100c;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.34em;
+  text-indent: 0.34em;
+  cursor: pointer;
+  background: linear-gradient(180deg, #eed9ae, #d9b97e);
+  border: 0;
+  border-radius: 3px;
+  box-shadow: 0 4px 18px rgba(231, 204, 160, 0.22);
+  transition: filter 0.25s ease, box-shadow 0.25s ease;
+}
+
+.history-person-focus:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 4px 26px rgba(231, 204, 160, 0.34);
+}
+
+.history-person-isolation {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  padding: 2px;
+  background: rgba(2, 7, 11, 0.6);
+  border: 1px solid rgba(231, 204, 160, 0.16);
+  border-radius: 4px;
+}
+
+.history-person-isolation button {
+  padding: 7px;
+  color: rgba(243, 235, 221, 0.6);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+}
+
+.history-person-isolation button[aria-pressed="true"] {
+  color: var(--history-gold);
+  background: rgba(231, 204, 160, 0.14);
+}
+
+.history-person-close {
+  padding: 7px;
+  color: rgba(169, 197, 220, 0.6);
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid rgba(169, 197, 220, 0.18);
+  border-radius: 3px;
+  transition: color 0.25s ease, border-color 0.25s ease;
+}
+
+.history-person-close:hover {
+  color: var(--history-ivory);
+  border-color: rgba(169, 197, 220, 0.4);
+}
+
+/* --- 悬停名签 --- */
+
+.history-person-tooltip {
+  position: absolute;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 11px;
+  pointer-events: none;
+  background: rgba(2, 7, 11, 0.78);
+  border: 1px solid rgba(231, 204, 160, 0.3);
+  border-radius: 3px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  transform: translateY(-100%);
+  white-space: nowrap;
+}
+
+.history-person-tooltip strong {
+  color: var(--history-gold);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.history-person-tooltip span {
+  color: rgba(169, 197, 220, 0.65);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+/* --- 底部操作提示 --- */
+
+.history-hints {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  display: flex;
+  gap: 26px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  color: rgba(169, 197, 220, 0.42);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  white-space: nowrap;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7);
+}
+
+/* --- 焦点与可及性 --- */
+
+.history-experience button:focus-visible {
+  outline: 1.5px solid var(--history-gold);
+  outline-offset: 2px;
+}
+
+.history-person-card::-webkit-scrollbar,
+.history-directory-body::-webkit-scrollbar,
+.history-person-card-evidence ol::-webkit-scrollbar {
+  width: 4px;
+}
+
+.history-person-card::-webkit-scrollbar-thumb,
+.history-directory-body::-webkit-scrollbar-thumb,
+.history-person-card-evidence ol::-webkit-scrollbar-thumb {
+  background: rgba(231, 204, 160, 0.24);
+  border-radius: 2px;
+}

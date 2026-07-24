@@ -28,9 +28,18 @@ export interface PersonThreadRig {
   update(now: number, lowMotion: boolean): void;
   resize(width: number, height: number): void;
   setSelection(personIndex: number | null): void;
+  setHovered(personIndex: number | null): void;
   setIsolationMode(mode: PersonIsolationMode): void;
   setLayerVisibility(visibility: PersonThreadLayerVisibility): void;
   getPersonBounds(personIndex: number): THREE.Box3 | null;
+  pickPerson(
+    camera: THREE.PerspectiveCamera,
+    screenX: number,
+    screenY: number,
+    viewportWidth: number,
+    viewportHeight: number,
+    thresholdPx?: number,
+  ): number | null;
   dispose(): void;
 }
 
@@ -65,6 +74,7 @@ function createThreadMaterial(opacity: number, evidence: boolean): THREE.ShaderM
       uFlow: { value: 1 },
       uOpacity: { value: opacity },
       uSelectedPersonIndex: { value: -1 },
+      uHoveredPersonIndex: { value: -1 },
       uIsolationMode: { value: 0 },
       uDimOpacity: { value: 0.05 },
     },
@@ -97,6 +107,7 @@ function createThreadMaterial(opacity: number, evidence: boolean): THREE.ShaderM
       uniform float uFlow;
       uniform float uOpacity;
       uniform float uSelectedPersonIndex;
+      uniform float uHoveredPersonIndex;
       uniform float uIsolationMode;
       uniform float uDimOpacity;
 
@@ -113,6 +124,10 @@ function createThreadMaterial(opacity: number, evidence: boolean): THREE.ShaderM
           if (uIsolationMode > 1.5) discard;
           selectionGain = uDimOpacity;
         }
+        float hoverGain = 0.0;
+        if (uHoveredPersonIndex >= 0.0 && abs(vPersonIndex - uHoveredPersonIndex) < 0.25) {
+          hoverGain = 1.0;
+        }
         if (vDerivation > 2.5 && fract(vYearIndex * 0.62) > 0.58) discard;
         float flowPhase = fract(vPhase - uTime * 0.000035 * uFlow);
         float glint = smoothstep(0.0, 0.045, flowPhase)
@@ -120,7 +135,9 @@ function createThreadMaterial(opacity: number, evidence: boolean): THREE.ShaderM
         vec3 celestial = vec3(0.53, 0.66, 0.76);
         vec3 color = mix(celestial, vColor, ${evidence ? "0.72" : "0.42"});
         color = mix(color, vec3(0.98, 0.88, 0.69), glint * ${evidence ? "0.48" : "0.28"});
-        float alpha = uOpacity * vAlpha * (0.58 + glint * 0.72) * selectionGain;
+        color = mix(color, vec3(1.0, 0.93, 0.78), hoverGain * 0.42);
+        float alpha = uOpacity * vAlpha * (0.58 + glint * 0.72)
+          * selectionGain * (1.0 + hoverGain * 0.85);
         if (alpha <= 0.004) discard;
         gl_FragColor = vec4(color, alpha);
       }
@@ -340,6 +357,7 @@ export function createPersonThreadRig(data: RenderHistoryDataset): PersonThreadR
   const selected = new THREE.Group();
   root.add(selected);
   let selectedPersonIndex: number | null = null;
+  let hoveredPersonIndex: number | null = null;
   let isolationMode: PersonIsolationMode = "dim";
   let layerVisibility = { ...DEFAULT_LAYER_VISIBILITY };
   const resolution = new THREE.Vector2(1, 1);
@@ -352,6 +370,11 @@ export function createPersonThreadRig(data: RenderHistoryDataset): PersonThreadR
       material.uniforms.uSelectedPersonIndex.value = personIndex;
       material.uniforms.uIsolationMode.value = mode;
     }
+  };
+  const syncHoverUniforms = () => {
+    const personIndex = hoveredPersonIndex ?? -1;
+    lifeMaterial.uniforms.uHoveredPersonIndex.value = personIndex;
+    evidenceMaterial.uniforms.uHoveredPersonIndex.value = personIndex;
   };
 
   const applyLayerVisibility = () => {
@@ -468,6 +491,40 @@ export function createPersonThreadRig(data: RenderHistoryDataset): PersonThreadR
       selectedPersonIndex = personIndex;
       syncSelectionUniforms();
       rebuildSelected();
+    },
+    setHovered(personIndex) {
+      if (hoveredPersonIndex === personIndex) return;
+      hoveredPersonIndex = personIndex;
+      syncHoverUniforms();
+    },
+    pickPerson(camera, screenX, screenY, viewportWidth, viewportHeight, thresholdPx = 16) {
+      const positions = threadData.positions;
+      const personIndices = threadData.personIndices;
+      const segmentCount = Math.floor(positions.length / 6);
+      const projected = new THREE.Vector3();
+      let bestPersonIndex: number | null = null;
+      let bestDistance = thresholdPx;
+      let bestDepth = Number.POSITIVE_INFINITY;
+      camera.updateMatrixWorld();
+      for (let segment = 0; segment < segmentCount; segment += 1) {
+        const offset = segment * 6;
+        projected.set(
+          (positions[offset] + positions[offset + 3]) / 2,
+          (positions[offset + 1] + positions[offset + 4]) / 2,
+          (positions[offset + 2] + positions[offset + 5]) / 2,
+        ).project(camera);
+        if (projected.z < -1 || projected.z > 1) continue;
+        const px = (projected.x * 0.5 + 0.5) * viewportWidth;
+        const py = (-projected.y * 0.5 + 0.5) * viewportHeight;
+        const distance = Math.hypot(px - screenX, py - screenY);
+        if (distance > thresholdPx) continue;
+        if (distance < bestDistance || (distance === bestDistance && projected.z < bestDepth)) {
+          bestDistance = distance;
+          bestDepth = projected.z;
+          bestPersonIndex = personIndices[segment * 2];
+        }
+      }
+      return bestPersonIndex;
     },
     setIsolationMode(mode) {
       isolationMode = mode;

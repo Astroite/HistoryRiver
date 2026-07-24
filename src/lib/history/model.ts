@@ -222,6 +222,17 @@ export function historicalYearToY(year: number): number {
   return (endIndex - index) * UNITS_PER_YEAR;
 }
 
+/**
+ * Inverse of historicalYearToY for viewport readouts. The result is clamped to
+ * the content boundary so cameras beyond the artwork still report a valid era.
+ */
+export function yToHistoricalYear(y: number): number {
+  const endIndex = historicalYearToIndex(CONTENT_END_YEAR, RIVER_START_YEAR);
+  const rawIndex = Math.round(endIndex - y / UNITS_PER_YEAR);
+  const clampedIndex = Math.min(Math.max(rawIndex, 0), endIndex);
+  return yearIndexToHistoricalYear(clampedIndex, RIVER_START_YEAR);
+}
+
 export function formatHistoricalYear(year: number): string {
   assertHistoricalYear(year);
   return year < 0 ? `公元前 ${Math.abs(year)} 年` : `${year} 年`;
@@ -578,12 +589,24 @@ export interface PersonEvidenceRange {
 export interface RenderPersonRecord {
   id: string;
   canonicalName: string;
+  aliases: string[];
+  eraId: string;
   domain: Domain;
+  chronologyStatus: ChronologyStatus;
+  selectionReason: string;
   visualWeight: number;
   birthYear: number | null;
   deathYear: number | null;
   trajectoryStartYear: number;
   trajectoryEndYear: number;
+}
+
+export interface RenderEraRecord {
+  id: string;
+  label: string;
+  startYear: number;
+  endYear: number;
+  order: number;
 }
 
 export interface RenderLocationRecord {
@@ -622,6 +645,7 @@ export interface RenderHistoryDataset {
     personCount: number;
     personYearCount: number;
   };
+  eras: RenderEraRecord[];
   locations: RenderLocationRecord[];
   people: RenderPersonRecord[];
   personYears: RenderPersonYear[];
@@ -674,6 +698,7 @@ export function buildPersonThreadGeometry(
     locations: [...locations.values()],
     people: dataset.people,
     personYears: dataset.personYears,
+    eras: [],
   }));
 }
 
@@ -688,12 +713,19 @@ function evidenceKey(record: PersonYear): string | null {
 }
 
 export function buildRenderHistoryDataset(
-  dataset: Pick<AnnualHistoryDataset, "manifest" | "locations" | "people" | "personYears">,
+  dataset: Pick<
+    AnnualHistoryDataset,
+    "manifest" | "eras" | "locations" | "people" | "personYears"
+  >,
 ): RenderHistoryDataset {
   const people = dataset.people.map((person) => ({
     id: person.id,
     canonicalName: person.canonicalName,
+    aliases: [...person.aliases],
+    eraId: person.eraId,
     domain: person.domains[0] ?? "culture" as Domain,
+    chronologyStatus: person.chronologyStatus,
+    selectionReason: person.selectionReason,
     visualWeight: person.visualWeight,
     birthYear: person.birthYear,
     deathYear: person.deathYear,
@@ -733,6 +765,13 @@ export function buildRenderHistoryDataset(
       personCount: dataset.manifest.personCount,
       personYearCount: dataset.manifest.personYearCount,
     },
+    eras: dataset.eras.map((era) => ({
+      id: era.id,
+      label: era.label,
+      startYear: era.startYear,
+      endYear: era.endYear,
+      order: era.order,
+    })),
     locations: dataset.locations.map((location) => ({ id: location.id, label: location.label })),
     people,
     personYears: dataset.personYears.map((record) => [

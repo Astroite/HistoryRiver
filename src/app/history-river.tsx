@@ -7,6 +7,7 @@ import {
   createHistoryGeography,
   type HistoryGeographyComponent,
 } from "@/app/history-geography-visuals";
+import { HistoryExperience } from "@/app/history-experience";
 import {
   createHistoryPostProcessing,
   createHistoryVisuals,
@@ -24,10 +25,14 @@ import {
 import renderData from "@/data/history/generated/render-data.json";
 import {
   RIVER_START_YEAR,
+  historicalYearToIndex,
   historicalYearToY,
+  yToHistoricalYear,
+  yearIndexToHistoricalYear,
+  type RenderEraRecord,
   type RenderHistoryDataset,
 } from "@/lib/history/model";
-import { UE5EditorCameraControls } from "@/lib/viewport/ue5-editor-camera-controls";
+import { RiverCameraControls } from "@/lib/viewport/river-camera-controls";
 
 const historyData = renderData as unknown as RenderHistoryDataset;
 
@@ -332,10 +337,27 @@ function disposeScene(scene: THREE.Scene) {
   });
 }
 
+interface HistorySceneApi {
+  camera: THREE.PerspectiveCamera;
+  controls: RiverCameraControls;
+  rig: PersonThreadRig;
+  element: HTMLCanvasElement;
+}
+
+function eraGlideTargetY(era: RenderEraRecord): number {
+  const middleIndex = Math.round(
+    (historicalYearToIndex(era.startYear, RIVER_START_YEAR)
+      + historicalYearToIndex(era.endYear, RIVER_START_YEAR)) / 2,
+  );
+  return historicalYearToY(yearIndexToHistoricalYear(middleIndex, RIVER_START_YEAR));
+}
+
 export function HistoryRiver() {
   const mountRef = useRef<HTMLDivElement>(null);
   const personThreadRigRef = useRef<PersonThreadRig | null>(null);
   const focusPersonRef = useRef<(personIndex: number) => void>(() => undefined);
+  const flyTargetYRef = useRef<number | null>(null);
+  const currentYearRef = useRef<number | null>(null);
   const sceneComponentsRef = useRef<
     Partial<Record<SceneDebugComponent, THREE.Object3D>>
   >({});
@@ -351,6 +373,13 @@ export function HistoryRiver() {
   const [isolationMode, setIsolationMode] = useState<PersonIsolationMode>("dim");
   const [threadLayerVisibility, setThreadLayerVisibility] = useState(
     DEFAULT_THREAD_LAYER_VISIBILITY,
+  );
+  const [sceneApi, setSceneApi] = useState<HistorySceneApi | null>(null);
+  const [currentYear, setCurrentYear] = useState<number | null>(null);
+  const [prologueOpen, setPrologueOpen] = useState(true);
+  const [hoveredPersonIndex, setHoveredPersonIndex] = useState<number | null>(null);
+  const [pointerPosition, setPointerPosition] = useState<{ x: number; y: number } | null>(
+    null,
   );
 
   useEffect(() => {
@@ -403,7 +432,7 @@ export function HistoryRiver() {
     );
     mount.appendChild(renderer.domElement);
 
-    const cameraControls = new UE5EditorCameraControls(
+    const cameraControls = new RiverCameraControls(
       camera,
       renderer.domElement,
       {
@@ -478,6 +507,13 @@ export function HistoryRiver() {
     resizeObserver.observe(mount);
     resize();
 
+    setSceneApi({
+      camera,
+      controls: cameraControls,
+      rig: personThreads,
+      element: renderer.domElement,
+    });
+
     let previousFrameTime = 0;
     renderer.setAnimationLoop((now) => {
       renderer.info.reset();
@@ -488,6 +524,22 @@ export function HistoryRiver() {
       }
       previousFrameTime = now;
       cameraControls.update(deltaSeconds);
+      if (flyTargetYRef.current !== null) {
+        const remaining = flyTargetYRef.current - cameraControls.pivot.y;
+        const step = Math.abs(remaining) < 0.02
+          ? remaining
+          : remaining * (1 - Math.exp(-Math.max(deltaSeconds, 0.008) * 2.6));
+        cameraControls.pivot.y += step;
+        camera.position.y += step;
+        if (Math.abs(flyTargetYRef.current - cameraControls.pivot.y) < 0.02) {
+          flyTargetYRef.current = null;
+        }
+      }
+      const year = yToHistoricalYear(cameraControls.pivot.y);
+      if (year !== currentYearRef.current) {
+        currentYearRef.current = year;
+        setCurrentYear(year);
+      }
       geography.update(now, lowMotion);
       visuals.update(now, lowMotion);
       personThreads.update(now, lowMotion);
@@ -515,6 +567,9 @@ export function HistoryRiver() {
       personThreadRigRef.current = null;
       focusPersonRef.current = () => undefined;
       sceneComponentsRef.current = {};
+      flyTargetYRef.current = null;
+      currentYearRef.current = null;
+      setSceneApi(null);
     };
   }, []);
 
@@ -537,6 +592,105 @@ export function HistoryRiver() {
   useEffect(() => {
     personThreadRigRef.current?.setLayerVisibility(threadLayerVisibility);
   }, [threadLayerVisibility]);
+
+  useEffect(() => {
+    if (!sceneApi) return;
+    const { camera, rig, element } = sceneApi;
+    let pickFrame = 0;
+    let pendingPointer: { x: number; y: number } | null = null;
+    let pressStart: { x: number; y: number; time: number; altKey: boolean } | null = null;
+
+    const clearHover = () => {
+      pendingPointer = null;
+      setHoveredPersonIndex(null);
+      setPointerPosition(null);
+      rig.setHovered(null);
+      element.style.cursor = "";
+    };
+
+    const runPick = () => {
+      pickFrame = 0;
+      if (!pendingPointer) return;
+      const rect = element.getBoundingClientRect();
+      const hit = rig.pickPerson(
+        camera,
+        pendingPointer.x - rect.left,
+        pendingPointer.y - rect.top,
+        rect.width,
+        rect.height,
+      );
+      setHoveredPersonIndex(hit);
+      setPointerPosition(hit === null ? null : { ...pendingPointer });
+      rig.setHovered(hit);
+      element.style.cursor = hit === null ? "" : "pointer";
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse") return;
+      if (event.buttons !== 0) {
+        if (pendingPointer) clearHover();
+        return;
+      }
+      pendingPointer = { x: event.clientX, y: event.clientY };
+      if (pickFrame === 0) pickFrame = requestAnimationFrame(runPick);
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      setPrologueOpen(false);
+      flyTargetYRef.current = null;
+      if (event.button === 0) {
+        pressStart = {
+          x: event.clientX,
+          y: event.clientY,
+          time: performance.now(),
+          altKey: event.altKey,
+        };
+      }
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      if (event.button !== 0 || !pressStart) return;
+      const { x, y, time, altKey } = pressStart;
+      pressStart = null;
+      const moved = Math.hypot(event.clientX - x, event.clientY - y);
+      if (altKey || moved > 6 || performance.now() - time > 600) return;
+      const rect = element.getBoundingClientRect();
+      const hit = rig.pickPerson(
+        camera,
+        event.clientX - rect.left,
+        event.clientY - rect.top,
+        rect.width,
+        rect.height,
+        20,
+      );
+      setSelectedPersonIndex(hit);
+    };
+
+    const onWheel = () => {
+      flyTargetYRef.current = null;
+      setPrologueOpen(false);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "Escape") setSelectedPersonIndex(null);
+    };
+
+    element.addEventListener("pointermove", onPointerMove);
+    element.addEventListener("pointerdown", onPointerDown);
+    element.addEventListener("pointerup", onPointerUp);
+    element.addEventListener("pointerleave", clearHover);
+    element.addEventListener("wheel", onWheel, { passive: true });
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      element.removeEventListener("pointermove", onPointerMove);
+      element.removeEventListener("pointerdown", onPointerDown);
+      element.removeEventListener("pointerup", onPointerUp);
+      element.removeEventListener("pointerleave", clearHover);
+      element.removeEventListener("wheel", onWheel);
+      window.removeEventListener("keydown", onKeyDown);
+      if (pickFrame !== 0) cancelAnimationFrame(pickFrame);
+    };
+  }, [sceneApi]);
 
   const changeComponentVisibility = (
     component: DebugComponent,
@@ -565,6 +719,16 @@ export function HistoryRiver() {
     setThreadLayerVisibility((current) => ({ ...current, [layer]: visible }));
   };
 
+  const selectPerson = (personIndex: number | null, focus = false) => {
+    setSelectedPersonIndex(personIndex);
+    if (focus && personIndex !== null) focusPersonRef.current(personIndex);
+  };
+
+  const glideToEra = (era: RenderEraRecord) => {
+    setPrologueOpen(false);
+    flyTargetYRef.current = eraGlideTargetY(era);
+  };
+
   return (
     <main className="history-shell">
       <div ref={mountRef} className="history-stage" />
@@ -572,6 +736,19 @@ export function HistoryRiver() {
         className="history-vignette"
         aria-hidden="true"
         hidden={!componentVisibility.vignette}
+      />
+      <HistoryExperience
+        data={historyData}
+        currentYear={currentYear}
+        prologueOpen={prologueOpen}
+        onPrologueChange={setPrologueOpen}
+        hoveredPersonIndex={hoveredPersonIndex}
+        pointerPosition={pointerPosition}
+        selectedPersonIndex={selectedPersonIndex}
+        isolationMode={isolationMode}
+        onIsolationModeChange={setIsolationMode}
+        onEraSelect={glideToEra}
+        onPersonSelect={selectPerson}
       />
       {debugEnabled ? (
         <HistoryDebugMenu

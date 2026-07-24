@@ -1,4 +1,83 @@
 {
+  "eras": [
+    {
+      "endYear": -1601,
+      "id": "early-civilization",
+      "label": "传说与早期文明",
+      "order": 1,
+      "startYear": -2700
+    },
+    {
+      "endYear": -771,
+      "id": "shang-zhou",
+      "label": "商与西周",
+      "order": 2,
+      "startYear": -1600
+    },
+    {
+      "endYear": -222,
+      "id": "spring-warring",
+      "label": "春秋战国",
+      "order": 3,
+      "startYear": -770
+    },
+    {
+      "endYear": 220,
+      "id": "qin-han",
+      "label": "秦汉",
+      "order": 4,
+      "startYear": -221
+    },
+    {
+      "endYear": 589,
+      "id": "division",
+      "label": "三国两晋南北朝",
+      "order": 5,
+      "startYear": 221
+    },
+    {
+      "endYear": 959,
+      "id": "sui-tang-five",
+      "label": "隋唐五代",
+      "order": 6,
+      "startYear": 590
+    },
+    {
+      "endYear": 1270,
+      "id": "song-liao-xia-jin",
+      "label": "宋辽夏金",
+      "order": 7,
+      "startYear": 960
+    },
+    {
+      "endYear": 1367,
+      "id": "yuan",
+      "label": "元",
+      "order": 8,
+      "startYear": 1271
+    },
+    {
+      "endYear": 1643,
+      "id": "ming",
+      "label": "明",
+      "order": 9,
+      "startYear": 1368
+    },
+    {
+      "endYear": 1840,
+      "id": "qing",
+      "label": "清",
+      "order": 10,
+      "startYear": 1644
+    },
+    {
+      "endYear": 1949,
+      "id": "late-qing-republic",
+      "label": "晚清民国至 1949",
+      "order": 11,
+      "startYear": 1841
+    }
+  ],
   "locations": [
     {
       "id": "central-plains",
@@ -52,441 +131,711 @@
   },
   "people": [
     {
+      "aliases": [
+        "曹大家"
+      ],
       "birthYear": 45,
       "canonicalName": "班昭",
+      "chronologyStatus": "estimated",
       "deathYear": 116,
       "domain": "culture",
+      "eraId": "qin-han",
       "id": "ban-zhao",
+      "selectionReason": "女性史家与经学教育者。",
       "trajectoryEndYear": 116,
       "trajectoryStartYear": 45,
       "visualWeight": 0.72
     },
     {
+      "aliases": [
+        "蔡孑民"
+      ],
       "birthYear": 1868,
       "canonicalName": "蔡元培",
+      "chronologyStatus": "attested",
       "deathYear": 1940,
       "domain": "culture",
+      "eraId": "late-qing-republic",
       "id": "cai-yuanpei",
+      "selectionReason": "现代教育制度与学术文化转型的关键人物。",
       "trajectoryEndYear": 1940,
       "trajectoryStartYear": 1868,
       "visualWeight": 0.74
     },
     {
+      "aliases": [
+        "曹霑"
+      ],
       "birthYear": 1715,
       "canonicalName": "曹雪芹",
+      "chronologyStatus": "estimated",
       "deathYear": 1763,
       "domain": "culture",
+      "eraId": "qing",
       "id": "cao-xueqin",
+      "selectionReason": "清代小说与社会文化记忆的关键人物；生卒年有争议。",
       "trajectoryEndYear": 1763,
       "trajectoryStartYear": 1715,
       "visualWeight": 0.82
     },
     {
+      "aliases": [
+        "孔丘",
+        "仲尼"
+      ],
       "birthYear": -551,
       "canonicalName": "孔子",
+      "chronologyStatus": "attested",
       "deathYear": -479,
       "domain": "thought",
+      "eraId": "spring-warring",
       "id": "confucius",
+      "selectionReason": "先秦思想与教育传统的关键人物。",
       "trajectoryEndYear": -479,
       "trajectoryStartYear": -551,
       "visualWeight": 0.9
     },
     {
+      "aliases": [
+        "周公",
+        "姬旦"
+      ],
       "birthYear": null,
       "canonicalName": "周公旦",
+      "chronologyStatus": "traditional",
       "deathYear": null,
       "domain": "statecraft",
+      "eraId": "shang-zhou",
       "id": "duke-zhou",
+      "selectionReason": "西周制度与礼乐传统中的关键人物。",
       "trajectoryEndYear": -1015,
       "trajectoryStartYear": -1045,
       "visualWeight": 0.72
     },
     {
+      "aliases": [
+        "范文正公"
+      ],
       "birthYear": 989,
       "canonicalName": "范仲淹",
+      "chronologyStatus": "attested",
       "deathYear": 1052,
       "domain": "statecraft",
+      "eraId": "song-liao-xia-jin",
       "id": "fan-zhongyan",
+      "selectionReason": "北宋政治改革与士大夫公共理想的代表。",
       "trajectoryEndYear": 1052,
       "trajectoryStartYear": 989,
       "visualWeight": 0.76
     },
     {
+      "aliases": [
+        "后母辛"
+      ],
       "birthYear": null,
       "canonicalName": "妇好",
+      "chronologyStatus": "estimated",
       "deathYear": null,
       "domain": "military",
+      "eraId": "shang-zhou",
       "id": "fu-hao",
+      "selectionReason": "甲骨卜辞与墓葬材料中可见的商代女性政治军事人物。",
       "trajectoryEndYear": -1190,
       "trajectoryStartYear": -1250,
       "visualWeight": 0.72
     },
     {
+      "aliases": [
+        "已斋叟"
+      ],
       "birthYear": null,
       "canonicalName": "关汉卿",
+      "chronologyStatus": "estimated",
       "deathYear": null,
       "domain": "culture",
+      "eraId": "yuan",
       "id": "guan-hanqing",
+      "selectionReason": "元杂剧传统的代表人物；生卒年代不确定。",
       "trajectoryEndYear": 1300,
       "trajectoryStartYear": 1230,
       "visualWeight": 0.76
     },
     {
+      "aliases": [],
       "birthYear": 1231,
       "canonicalName": "郭守敬",
+      "chronologyStatus": "attested",
       "deathYear": 1316,
       "domain": "craft",
+      "eraId": "yuan",
       "id": "guo-shoujing",
+      "selectionReason": "天文、历法与水利工程的关键人物。",
       "trajectoryEndYear": 1316,
       "trajectoryStartYear": 1231,
       "visualWeight": 0.76
     },
     {
+      "aliases": [],
       "birthYear": 835,
       "canonicalName": "黄巢",
+      "chronologyStatus": "estimated",
       "deathYear": 884,
       "domain": "military",
+      "eraId": "sui-tang-five",
       "id": "huang-chao",
+      "selectionReason": "晚唐社会危机与政局转折的关键人物。",
       "trajectoryEndYear": 884,
       "trajectoryStartYear": 835,
       "visualWeight": 0.7
     },
     {
+      "aliases": [
+        "轩辕氏"
+      ],
       "birthYear": null,
       "canonicalName": "黄帝",
+      "chronologyStatus": "traditional",
       "deathYear": null,
       "domain": "statecraft",
+      "eraId": "early-civilization",
       "id": "huangdi",
+      "selectionReason": "传统五帝叙事的核心人物；用于检验传说纪年和高不确定度表达。",
       "trajectoryEndYear": -2597,
       "trajectoryStartYear": -2697,
       "visualWeight": 0.72
     },
     {
+      "aliases": [
+        "玄烨",
+        "清圣祖"
+      ],
       "birthYear": 1654,
       "canonicalName": "康熙帝",
+      "chronologyStatus": "attested",
       "deathYear": 1722,
       "domain": "statecraft",
+      "eraId": "qing",
       "id": "kangxi",
+      "selectionReason": "清前期统一与帝国治理的关键人物。",
       "trajectoryEndYear": 1722,
       "trajectoryStartYear": 1654,
       "visualWeight": 0.84
     },
     {
+      "aliases": [
+        "姬昌"
+      ],
       "birthYear": -1152,
       "canonicalName": "周文王",
+      "chronologyStatus": "traditional",
       "deathYear": -1050,
       "domain": "statecraft",
+      "eraId": "shang-zhou",
       "id": "king-wen",
+      "selectionReason": "周人兴起与西周政治文化叙事的关键人物。",
       "trajectoryEndYear": -1050,
       "trajectoryStartYear": -1152,
       "visualWeight": 0.74
     },
     {
+      "aliases": [
+        "姬发"
+      ],
       "birthYear": null,
       "canonicalName": "周武王",
+      "chronologyStatus": "traditional",
       "deathYear": -1043,
       "domain": "statecraft",
+      "eraId": "shang-zhou",
       "id": "king-wu",
+      "selectionReason": "商周政权更替的关键人物。",
       "trajectoryEndYear": -1043,
       "trajectoryStartYear": -1060,
       "visualWeight": 0.76
     },
     {
+      "aliases": [
+        "元世祖"
+      ],
       "birthYear": 1215,
       "canonicalName": "忽必烈",
+      "chronologyStatus": "attested",
       "deathYear": 1294,
       "domain": "statecraft",
+      "eraId": "yuan",
       "id": "kublai",
+      "selectionReason": "元朝建立与欧亚帝国治理的关键人物。",
       "trajectoryEndYear": 1294,
       "trajectoryStartYear": 1215,
       "visualWeight": 0.88
     },
     {
+      "aliases": [
+        "李太白",
+        "青莲居士"
+      ],
       "birthYear": 701,
       "canonicalName": "李白",
+      "chronologyStatus": "estimated",
       "deathYear": 762,
       "domain": "culture",
+      "eraId": "sui-tang-five",
       "id": "li-bai",
+      "selectionReason": "盛唐诗歌与跨地域游历的代表人物。",
       "trajectoryEndYear": 762,
       "trajectoryStartYear": 701,
       "visualWeight": 0.82
     },
     {
+      "aliases": [
+        "濒湖山人"
+      ],
       "birthYear": 1518,
       "canonicalName": "李时珍",
+      "chronologyStatus": "attested",
       "deathYear": 1593,
       "domain": "craft",
+      "eraId": "ming",
       "id": "li-shizhen",
+      "selectionReason": "本草学与医药知识整理的关键人物。",
       "trajectoryEndYear": 1593,
       "trajectoryStartYear": 1518,
       "visualWeight": 0.78
     },
     {
+      "aliases": [
+        "林文忠公"
+      ],
       "birthYear": 1785,
       "canonicalName": "林则徐",
+      "chronologyStatus": "attested",
       "deathYear": 1850,
       "domain": "statecraft",
+      "eraId": "qing",
       "id": "lin-zexu",
+      "selectionReason": "鸦片战争前后国家治理与海疆危机的关键人物。",
       "trajectoryEndYear": 1850,
       "trajectoryStartYear": 1785,
       "visualWeight": 0.78
     },
     {
+      "aliases": [
+        "汉高祖"
+      ],
       "birthYear": -256,
       "canonicalName": "刘邦",
+      "chronologyStatus": "attested",
       "deathYear": -195,
       "domain": "statecraft",
+      "eraId": "qin-han",
       "id": "liu-bang",
+      "selectionReason": "汉帝国建立的关键人物。",
       "trajectoryEndYear": -195,
       "trajectoryStartYear": -256,
       "visualWeight": 0.86
     },
     {
+      "aliases": [
+        "周树人"
+      ],
       "birthYear": 1881,
       "canonicalName": "鲁迅",
+      "chronologyStatus": "attested",
       "deathYear": 1936,
       "domain": "culture",
+      "eraId": "late-qing-republic",
       "id": "lu-xun",
+      "selectionReason": "现代文学与思想文化转型的关键人物。",
       "trajectoryEndYear": 1936,
       "trajectoryStartYear": 1881,
       "visualWeight": 0.84
     },
     {
+      "aliases": [
+        "墨翟"
+      ],
       "birthYear": null,
       "canonicalName": "墨子",
+      "chronologyStatus": "estimated",
       "deathYear": null,
       "domain": "thought",
+      "eraId": "spring-warring",
       "id": "mozi",
+      "selectionReason": "墨家思想、技术与社会实践的代表。",
       "trajectoryEndYear": -391,
       "trajectoryStartYear": -470,
       "visualWeight": 0.78
     },
     {
+      "aliases": [
+        "嬴政",
+        "始皇帝"
+      ],
       "birthYear": -259,
       "canonicalName": "秦始皇",
+      "chronologyStatus": "attested",
       "deathYear": -210,
       "domain": "statecraft",
+      "eraId": "spring-warring",
       "id": "qin-shihuang",
+      "selectionReason": "战国终结与秦统一制度的关键人物。",
       "trajectoryEndYear": -210,
       "trajectoryStartYear": -259,
       "visualWeight": 0.9
     },
     {
+      "aliases": [
+        "帝舜",
+        "有虞氏"
+      ],
       "birthYear": null,
       "canonicalName": "舜",
+      "chronologyStatus": "traditional",
       "deathYear": null,
       "domain": "statecraft",
+      "eraId": "early-civilization",
       "id": "shun",
+      "selectionReason": "传统禅让叙事的核心人物。",
       "trajectoryEndYear": -2206,
       "trajectoryStartYear": -2255,
       "visualWeight": 0.64
     },
     {
+      "aliases": [
+        "太史公"
+      ],
       "birthYear": -145,
       "canonicalName": "司马迁",
+      "chronologyStatus": "estimated",
       "deathYear": -86,
       "domain": "culture",
+      "eraId": "qin-han",
       "id": "sima-qian",
+      "selectionReason": "中国纪传体史学传统的关键人物。",
       "trajectoryEndYear": -86,
       "trajectoryStartYear": -145,
       "visualWeight": 0.84
     },
     {
+      "aliases": [
+        "孙夫人"
+      ],
       "birthYear": 1893,
       "canonicalName": "宋庆龄",
+      "chronologyStatus": "attested",
       "deathYear": 1981,
       "domain": "statecraft",
+      "eraId": "late-qing-republic",
       "id": "soong-chingling",
+      "selectionReason": "连接革命、民国与 1949 内容边界的女性政治人物；生命并未在 1949 结束。",
       "trajectoryEndYear": 1949,
       "trajectoryStartYear": 1893,
       "visualWeight": 0.76
     },
     {
+      "aliases": [
+        "苏东坡"
+      ],
       "birthYear": 1037,
       "canonicalName": "苏轼",
+      "chronologyStatus": "attested",
       "deathYear": 1101,
       "domain": "culture",
+      "eraId": "song-liao-xia-jin",
       "id": "su-shi",
+      "selectionReason": "宋代文学艺术与士人政治生活的关键人物。",
       "trajectoryEndYear": 1101,
       "trajectoryStartYear": 1037,
       "visualWeight": 0.82
     },
     {
+      "aliases": [
+        "杨坚"
+      ],
       "birthYear": 541,
       "canonicalName": "隋文帝",
+      "chronologyStatus": "attested",
       "deathYear": 604,
       "domain": "statecraft",
+      "eraId": "sui-tang-five",
       "id": "sui-wendi",
+      "selectionReason": "结束长期分裂并建立隋朝的关键人物。",
       "trajectoryEndYear": 604,
       "trajectoryStartYear": 541,
       "visualWeight": 0.8
     },
     {
+      "aliases": [
+        "孙文",
+        "孙逸仙"
+      ],
       "birthYear": 1866,
       "canonicalName": "孙中山",
+      "chronologyStatus": "attested",
       "deathYear": 1925,
       "domain": "statecraft",
+      "eraId": "late-qing-republic",
       "id": "sun-yatsen",
+      "selectionReason": "辛亥革命与共和国建立的关键人物。",
       "trajectoryEndYear": 1925,
       "trajectoryStartYear": 1866,
       "visualWeight": 0.88
     },
     {
+      "aliases": [
+        "孙子"
+      ],
       "birthYear": null,
       "canonicalName": "孙武",
+      "chronologyStatus": "disputed",
       "deathYear": null,
       "domain": "military",
+      "eraId": "spring-warring",
       "id": "sunzi",
+      "selectionReason": "军事思想传统的代表；生平年代存在争议。",
       "trajectoryEndYear": -496,
       "trajectoryStartYear": -512,
       "visualWeight": 0.76
     },
     {
+      "aliases": [
+        "陶潜"
+      ],
       "birthYear": 365,
       "canonicalName": "陶渊明",
+      "chronologyStatus": "estimated",
       "deathYear": 427,
       "domain": "culture",
+      "eraId": "division",
       "id": "tao-yuanming",
+      "selectionReason": "六朝文学与隐逸传统的代表。",
       "trajectoryEndYear": 427,
       "trajectoryStartYear": 365,
       "visualWeight": 0.74
     },
     {
+      "aliases": [
+        "王右军"
+      ],
       "birthYear": 303,
       "canonicalName": "王羲之",
+      "chronologyStatus": "estimated",
       "deathYear": 361,
       "domain": "culture",
+      "eraId": "division",
       "id": "wang-xizhi",
+      "selectionReason": "书法史与东晋士人文化的关键人物。",
       "trajectoryEndYear": 361,
       "trajectoryStartYear": 303,
       "visualWeight": 0.76
     },
     {
+      "aliases": [
+        "王守仁"
+      ],
       "birthYear": 1472,
       "canonicalName": "王阳明",
+      "chronologyStatus": "attested",
       "deathYear": 1529,
       "domain": "thought",
+      "eraId": "ming",
       "id": "wang-yangming",
+      "selectionReason": "明代心学与经世实践的关键人物。",
       "trajectoryEndYear": 1529,
       "trajectoryStartYear": 1472,
       "visualWeight": 0.8
     },
     {
+      "aliases": [
+        "王嫱"
+      ],
       "birthYear": -54,
       "canonicalName": "王昭君",
+      "chronologyStatus": "estimated",
       "deathYear": 19,
       "domain": "statecraft",
+      "eraId": "qin-han",
       "id": "wang-zhaojun",
+      "selectionReason": "跨越汉匈政治与文化空间的女性人物，用于验证跨公元轨迹。",
       "trajectoryEndYear": 19,
       "trajectoryStartYear": -54,
       "visualWeight": 0.68
     },
     {
+      "aliases": [
+        "魏默深"
+      ],
       "birthYear": 1794,
       "canonicalName": "魏源",
+      "chronologyStatus": "attested",
       "deathYear": 1857,
       "domain": "thought",
+      "eraId": "qing",
       "id": "wei-yuan",
+      "selectionReason": "晚清经世思想与世界知识转型的关键人物。",
       "trajectoryEndYear": 1857,
       "trajectoryStartYear": 1794,
       "visualWeight": 0.72
     },
     {
+      "aliases": [
+        "武曌"
+      ],
       "birthYear": 624,
       "canonicalName": "武则天",
+      "chronologyStatus": "attested",
       "deathYear": 705,
       "domain": "statecraft",
+      "eraId": "sui-tang-five",
       "id": "wu-zetian",
+      "selectionReason": "中国历史上唯一以皇帝称号统治的女性。",
       "trajectoryEndYear": 705,
       "trajectoryStartYear": 624,
       "visualWeight": 0.86
     },
     {
+      "aliases": [
+        "帝尧",
+        "陶唐氏"
+      ],
       "birthYear": null,
       "canonicalName": "尧",
+      "chronologyStatus": "traditional",
       "deathYear": null,
       "domain": "statecraft",
+      "eraId": "early-civilization",
       "id": "yao",
+      "selectionReason": "传统禅让叙事的核心人物。",
       "trajectoryEndYear": -2256,
       "trajectoryStartYear": -2356,
       "visualWeight": 0.64
     },
     {
+      "aliases": [
+        "大禹"
+      ],
       "birthYear": null,
       "canonicalName": "禹",
+      "chronologyStatus": "traditional",
       "deathYear": null,
       "domain": "statecraft",
+      "eraId": "early-civilization",
       "id": "yu",
+      "selectionReason": "治水与夏代开端的传统叙事核心。",
       "trajectoryEndYear": -2147,
       "trajectoryStartYear": -2205,
       "visualWeight": 0.7
     },
     {
+      "aliases": [
+        "岳武穆"
+      ],
       "birthYear": 1103,
       "canonicalName": "岳飞",
+      "chronologyStatus": "attested",
       "deathYear": 1142,
       "domain": "military",
+      "eraId": "song-liao-xia-jin",
       "id": "yue-fei",
+      "selectionReason": "宋金战争中的关键军事人物。",
       "trajectoryEndYear": 1142,
       "trajectoryStartYear": 1103,
       "visualWeight": 0.8
     },
     {
+      "aliases": [
+        "宋太祖"
+      ],
       "birthYear": 927,
       "canonicalName": "赵匡胤",
+      "chronologyStatus": "attested",
       "deathYear": 976,
       "domain": "statecraft",
+      "eraId": "song-liao-xia-jin",
       "id": "zhao-kuangyin",
+      "selectionReason": "北宋建立与五代终结的关键人物。",
       "trajectoryEndYear": 976,
       "trajectoryStartYear": 927,
       "visualWeight": 0.82
     },
     {
+      "aliases": [
+        "松雪道人"
+      ],
       "birthYear": 1254,
       "canonicalName": "赵孟頫",
+      "chronologyStatus": "attested",
       "deathYear": 1322,
       "domain": "culture",
+      "eraId": "yuan",
       "id": "zhao-mengfu",
+      "selectionReason": "元代书画与跨朝士人身份的关键人物。",
       "trajectoryEndYear": 1322,
       "trajectoryStartYear": 1254,
       "visualWeight": 0.72
     },
     {
+      "aliases": [
+        "马三保"
+      ],
       "birthYear": 1371,
       "canonicalName": "郑和",
+      "chronologyStatus": "estimated",
       "deathYear": 1433,
       "domain": "statecraft",
+      "eraId": "ming",
       "id": "zheng-he",
+      "selectionReason": "明代远洋航行与跨区域交流的关键人物。",
       "trajectoryEndYear": 1433,
       "trajectoryStartYear": 1371,
       "visualWeight": 0.8
     },
     {
+      "aliases": [
+        "宇文邕"
+      ],
       "birthYear": 543,
       "canonicalName": "北周武帝",
+      "chronologyStatus": "attested",
       "deathYear": 578,
       "domain": "statecraft",
+      "eraId": "division",
       "id": "zhou-wudi",
+      "selectionReason": "北朝政权整合与隋统一前史的关键人物。",
       "trajectoryEndYear": 578,
       "trajectoryStartYear": 543,
       "visualWeight": 0.7
     },
     {
+      "aliases": [
+        "明太祖",
+        "洪武帝"
+      ],
       "birthYear": 1328,
       "canonicalName": "朱元璋",
+      "chronologyStatus": "attested",
       "deathYear": 1398,
       "domain": "statecraft",
+      "eraId": "ming",
       "id": "zhu-yuanzhang",
+      "selectionReason": "明朝建立与初期制度塑造的关键人物。",
       "trajectoryEndYear": 1398,
       "trajectoryStartYear": 1328,
       "visualWeight": 0.86
     },
     {
+      "aliases": [
+        "孔明",
+        "卧龙"
+      ],
       "birthYear": 181,
       "canonicalName": "诸葛亮",
+      "chronologyStatus": "attested",
       "deathYear": 234,
       "domain": "statecraft",
+      "eraId": "division",
       "id": "zhuge-liang",
+      "selectionReason": "三国政治与军事史的关键人物。",
       "trajectoryEndYear": 234,
       "trajectoryStartYear": 181,
       "visualWeight": 0.84

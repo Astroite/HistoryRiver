@@ -26,7 +26,7 @@ async function render() {
   );
 }
 
-test("server-renders only the HistoryRiver visual shell", async () => {
+test("server-renders the HistoryRiver shell with the viewing experience layer", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
@@ -36,7 +36,11 @@ test("server-renders only the HistoryRiver visual shell", async () => {
   assert.match(html, /<main class="history-shell">/);
   assert.match(html, /class="history-stage"/);
   assert.match(html, /class="history-vignette"/);
-  assert.doesNotMatch(html, /<button|<nav|<aside|<form|<input|<select/i);
+  assert.match(html, /class="history-experience"/);
+  assert.match(html, /class="history-prologue/);
+  assert.match(html, /aria-label="纪年轴"/);
+  assert.match(html, /春秋战国/);
+  assert.match(html, /history-directory-toggle/);
   assert.doesNotMatch(html, /原型 · 模拟数据|二十年窗口|观河|自动播放|人物详情/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
@@ -49,7 +53,7 @@ test("keeps product interaction debug-only while enabling editor-camera navigati
     readFile(new URL("../src/app/history-river.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/history-person-threads.ts", import.meta.url), "utf8"),
     readFile(
-      new URL("../src/lib/viewport/ue5-editor-camera-controls.ts", import.meta.url),
+      new URL("../src/lib/viewport/river-camera-controls.ts", import.meta.url),
       "utf8",
     ),
   ]);
@@ -67,7 +71,6 @@ test("keeps product interaction debug-only while enabling editor-camera navigati
     "prototypeFixture",
     "OrbitControls",
     "Raycaster",
-    "pointermove",
     "selectedRelation",
     "eventCloud",
     "relationLines",
@@ -75,22 +78,27 @@ test("keeps product interaction debug-only while enabling editor-camera navigati
     assert.doesNotMatch(runtime, new RegExp(forbidden), forbidden);
   }
   assert.match(runtime, /renderData/);
-  assert.match(runtime, /UE5EditorCameraControls/);
+  assert.match(runtime, /RiverCameraControls/);
   assert.match(runtime, /createPersonThreadRig/);
+  assert.match(runtime, /HistoryExperience/);
+  assert.match(runtime, /pickPerson/);
   assert.match(runtime, /URLSearchParams\(window\.location\.search\)\.has\("debug"\)/);
   assert.match(runtime, /HistoryDebugMenu/);
   assert.match(runtime, /sceneComponentsRef/);
   assert.match(personThreads, /buildRenderPersonThreadGeometry/);
   assert.match(personThreads, /Line2/);
   assert.match(personThreads, /summarizePersonEvidence/);
-  assert.match(cameraControls, /resolveUE5CameraGesture/);
-  assert.match(cameraControls, /requestPointerLock/);
+  assert.match(cameraControls, /resolveRiverDragMode/);
+  assert.match(cameraControls, /dblclick/);
   for (const forbidden of [
     "Raycaster",
     "selectedPerson",
     "selectedRelation",
     "autoPlay",
     "URLSearchParams",
+    "requestPointerLock",
+    "pointerLockElement",
+    "keydown",
   ]) {
     assert.doesNotMatch(cameraControls, new RegExp(forbidden), forbidden);
   }
